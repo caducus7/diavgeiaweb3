@@ -88,10 +88,14 @@ a crypto audience.
       mandatory would take.
 - [ ] Un-voiding: the registry treats a void as final (`AlreadyVoided`), but the portal un-voided one 2025
       act. Keep the rule (the chain then disagrees with the portal for that act, visibly), or allow a version
-      after a void? Changes the contract and SPEC §5.
+      after a void? Changes the contract and SPEC §5. Default kept on 2026-10-11 (the project owner chose the
+      defaults): a void stays final. Revisit if un-voids turn out to be common.
 - [ ] Payer field: the anchor's `payerVat` comes from the free-entered `extraFieldValues.org.afm`, which is
       wrong or empty on two 2025 acts. Diavgeia's `organizationId` is authoritative. Should the signer's
-      authority be checked against the org rather than the typed VAT? Changes the anchor semantics.
+      authority be checked against the org rather than the typed VAT? Changes the anchor semantics. Default
+      kept on 2026-10-11: the typed VAT, so a wrong one stays visible as `unanchorable` rather than hidden.
+- [x] Recordings of live runs are not committed (payee names of natural persons; 11.7 MB for a year). Two
+      recordings of Athens 2025 were identical, so `record` rebuilds one in about 4 minutes.
 - [x] Version log `status`: only `PUBLISHED` in all of Athens 2025. Unknown statuses stay a `history-error`.
 - [ ] Whether diafaneia.ai's team wants a verifier. A diff that is never zero is their problem first.
 
