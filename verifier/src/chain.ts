@@ -7,7 +7,7 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   createPublicClient, createWalletClient, http, type Hex, type Address, type Abi,
-  getContract, parseEventLogs,
+  getContract, parseEventLogs, hexToBytes,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { foundry } from "viem/chains";
@@ -15,6 +15,7 @@ import {
   actHash, adaKey, actTypeKey, contractRefFromSubject, contractRefKey, isVoid, toCents, unixDay, vatToUint,
   type DiavgeiaDecision,
 } from "./canonical.js";
+import type { ChainReader } from "./report.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const OUT = resolve(here, "../../contracts/out");
@@ -127,3 +128,26 @@ export async function anchorOne(dep: Deployment, d: DiavgeiaDecision, prevAnchor
 }
 
 export const ZERO32 = ("0x" + "00".repeat(32)) as Hex;
+
+/** Inverse of adaKey: strip the zero padding and decode UTF-8. */
+export function adaFromKey(key: Hex): string {
+  const bytes = hexToBytes(key);
+  let n = bytes.length;
+  while (n > 0 && bytes[n - 1] === 0) n--;
+  return new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, n));
+}
+
+/** ChainReader for report.ts. Scans Anchored logs from `fromBlock` (0 on Anvil;
+ *  on a real chain pass the registry's deployment block). */
+export function chainReader(dep: Deployment, fromBlock = 0n): ChainReader {
+  return {
+    versions: (ada) => readVersions(dep, ada),
+    async anchoredAdas() {
+      const logs = await publicClient.getContractEvents({
+        address: dep.registry, abi: artifact("ActRegistry").abi, eventName: "Anchored", fromBlock, toBlock: "latest",
+      });
+      const keys = new Set(logs.map((l) => (l as unknown as { args: { ada: Hex } }).args.ada));
+      return [...keys].map(adaFromKey);
+    },
+  };
+}

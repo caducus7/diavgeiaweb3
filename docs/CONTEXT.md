@@ -42,11 +42,14 @@ a crypto audience.
 
 ## What runs today
 
-- 20 Foundry tests, 14 vitest tests, all green.
+- 20 Foundry tests, 25 vitest tests, all green.
 - `deploy / anchor / verify / pay / award / link` against Anvil with fixtures: five real versions across four
   ADAs anchor; verify shows portal = chain = 624,252.09 EUR; tampering one amount by 36 cents is caught with
   exit 2; paying the voided act is refused with `ActVoided()`; linking the paints act against a 20,000 EUR
   ceiling fires `Overrun`.
+- `page` renders the same reconciliation as a static HTML page (next step 2, fixture only so far). `verify`
+  now also catches an anchored act that the portal stops returning (`portal-missing`, found from `Anchored`
+  logs) and no longer reports a chain that merely lags the portal as `mismatch` (`chain-behind`).
 - The live API client has not been run from a sandbox (egress blocked). Fixtures were fetched by hand.
   Record 4 in the fixture (pre-void version) is reconstructed from a field dump, not verbatim.
 
@@ -70,6 +73,8 @@ a crypto audience.
 1. Run `anchor` + `verify` live for all of Athens 2025 from a machine with network. First real test of the
    180-day windowing and the version-log walk at scale. Expect surprises in `isVoid` and in multi-sponsor acts.
 2. A per-municipality page: anchored total, portal total, difference. The product of Phase 1 is that one number.
+   Built (`cli page`) and checked on fixtures only. Still to do: run it on live data, and pass the registry's
+   deployment block to `chainReader` on any chain but Anvil (it scans `Anchored` logs from block 0).
 3. Replace the single-org signer with per-org keys derived from `/signers/{id}.json` (still civic, still a
    stand-in, but the data model becomes right).
 4. Only then: talk to anyone in government.

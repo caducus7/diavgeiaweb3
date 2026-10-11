@@ -10,7 +10,8 @@ Claude doc "Diavgeia on-chain: a plan"; `docs/CONTEXT.md` summarises it.
 - `contracts/` Foundry. `src/` has ActRegistry, PaymentGate, ProcurementGraph, MockRail. `test/Diavgeia.t.sol`.
   `lib/forge-std` is vendored on purpose (see Environment).
 - `verifier/` TypeScript, ESM, Node 22. `src/canonical.ts` is the spec implementation; `src/diavgeia.ts` the
-  OpenData client; `src/chain.ts` viem glue; `src/cli.ts` the commands. `fixtures/` holds real records.
+  OpenData client; `src/chain.ts` viem glue; `src/report.ts` the portal vs chain reconciliation (pure, tested
+  without Anvil); `src/page.ts` the static page; `src/cli.ts` the commands. `fixtures/` holds real records.
 - `docs/` SPEC.md (normative), CONTEXT.md (decisions, findings, open questions).
 
 ## Commands
@@ -21,7 +22,8 @@ cd verifier && npm ci && npm test && npm run typecheck
 anvil &  # then, from verifier/:
 DIAVGEIA_FIXTURE=fixtures/athens-2025-11.json npx tsx src/cli.ts deploy
 DIAVGEIA_FIXTURE=fixtures/athens-2025-11.json npx tsx src/cli.ts anchor
-DIAVGEIA_FIXTURE=fixtures/athens-2025-11.json npx tsx src/cli.ts verify   # exit 2 on any mismatch
+DIAVGEIA_FIXTURE=fixtures/athens-2025-11.json npx tsx src/cli.ts verify   # exit 2 on any disagreement
+DIAVGEIA_FIXTURE=fixtures/athens-2025-11.json npx tsx src/cli.ts page     # writes out/<org>-<from>-<to>.html
 ```
 
 Unset `DIAVGEIA_FIXTURE` to use the live API at https://diavgeia.gov.gr/opendata.

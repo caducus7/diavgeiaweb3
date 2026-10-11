@@ -109,10 +109,20 @@ first on-chain. PaymentGate therefore handles single-payee acts only. Multi-paye
 `anchor`: for each ADA in the search window, walk `/versionlog.json`, fetch earlier versions via
 `/decisions/v/{id}.json`, anchor any versions the chain lacks, in order, chaining `prevAnchor`.
 
-`verify`: for each ADA, compare chain versions against portal versions by hash. Statuses:
-`ok`, `void` (latest version voids; earlier versions still on chain), `unanchored`, `mismatch` (portal
-content differs from what was anchored), `chain-ahead` (chain has versions the portal no longer shows).
-Prints portal and chain non-void totals and their difference. Exit 2 if any `mismatch` or `chain-ahead`.
+`verify`: for each ADA the portal returns, compare chain versions against portal versions by hash,
+position by position. Statuses:
+`ok`, `void` (latest version voids; earlier versions still on chain), `unanchored`, `mismatch` (a version
+both sides hold differs), `chain-ahead` (chain has versions the portal no longer shows), `chain-behind`
+(chain holds a matching prefix of the portal's versions; the rest are not anchored yet).
+Then, for every ADA in the registry's `Anchored` logs whose latest anchor has the org's `payerVat` and an
+`issueDate` inside the window but which the portal did not return: `portal-missing`. Its amount counts in
+the chain total.
+Prints portal and chain non-void totals and their difference. Exit 2 if any `mismatch`, `chain-ahead` or
+`portal-missing` (also with `--json`). `chain-behind` and `unanchored` are lag, not disagreement.
+
+`page`: the same reconciliation rendered as one static HTML file (no scripts, no external requests). It
+shows ADAs, statuses and amounts only; subjects and payee names are left out. It states its data source
+(live or fixture) and the caveats on the totals. Same exit code as `verify`.
 
 Heuristics, flagged as such in code:
 - `isVoid(subject)`: subject starts with `ΑΚΥΡΟ` or `ΑΚΥΡΩΤΙΚ`. Diavgeia has no structured void flag.
