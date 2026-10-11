@@ -21,7 +21,10 @@ verifier/             TypeScript (viem, tsx, vitest)
   src/chain.ts               deploy, anchor, read back
   src/report.ts              portal vs chain reconciliation, shared by verify and page
   src/page.ts                static per-municipality HTML page
-  src/cli.ts                 deploy | anchor | verify | page | pay | award | link
+  src/validate.ts            shape checks on every API record (SPEC §8)
+  src/livecheck.ts           fixture vs live API, hash by hash
+  src/record.ts              save a live run in the fixture format
+  src/cli.ts                 deploy | anchor | verify | page | live-check | pay | award | link
   fixtures/athens-2025-11.json   5 real records (4 verbatim, 1 reconstructed earlier version)
 ```
 
@@ -31,7 +34,7 @@ Needs Foundry (forge, anvil) and Node 22.
 
 ```sh
 cd contracts && forge test                      # 20 passed
-cd ../verifier && npm install && npm test       # 25 passed
+cd ../verifier && npm install && npm test       # 66 passed
 
 anvil &                                         # local chain, default accounts
 export DIAVGEIA_FIXTURE=fixtures/athens-2025-11.json   # omit to hit the live API
@@ -39,6 +42,10 @@ npx tsx src/cli.ts deploy
 npx tsx src/cli.ts anchor      # 5 versions across 4 ADAs, incl. the void chain for ΨΟΣΝΩ6Μ-Θ6Ε
 npx tsx src/cli.ts verify      # per-ADA status + portal total vs chain total; exit 2 on any disagreement
 npx tsx src/cli.ts page        # same, as out/6013-2025-11-24-2025-11-30.html
+
+# with network, no DIAVGEIA_FIXTURE:
+npx tsx src/cli.ts live-check                     # fixture vs live API, hash by hash; exit 2 on any DIFF
+DIAVGEIA_RECORD=run.json npx tsx src/cli.ts verify # also save every record fetched, as a fixture
 
 npx tsx src/cli.ts pay --ada ΨΟΣΝΩ6Μ-Θ6Ε        # refused: ActVoided()
 npx tsx src/cli.ts pay --ada 9ΓΒΝΩ6Μ-Λ4Η        # released 25,462.16 EUR

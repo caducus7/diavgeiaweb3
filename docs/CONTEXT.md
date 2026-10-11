@@ -42,7 +42,7 @@ a crypto audience.
 
 ## What runs today
 
-- 20 Foundry tests, 25 vitest tests, all green.
+- 20 Foundry tests, 66 vitest tests, all green.
 - `deploy / anchor / verify / pay / award / link` against Anvil with fixtures: five real versions across four
   ADAs anchor; verify shows portal = chain = 624,252.09 EUR; tampering one amount by 36 cents is caught with
   exit 2; paying the voided act is refused with `ActVoided()`; linking the paints act against a 20,000 EUR
@@ -50,8 +50,11 @@ a crypto audience.
 - `page` renders the same reconciliation as a static HTML page (next step 2, fixture only so far). `verify`
   now also catches an anchored act that the portal stops returning (`portal-missing`, found from `Anchored`
   logs) and no longer reports a chain that merely lags the portal as `mismatch` (`chain-behind`).
-- The live API client has not been run from a sandbox (egress blocked). Fixtures were fetched by hand.
-  Record 4 in the fixture (pre-void version) is reconstructed from a field dump, not verbatim.
+- The live client is hardened but has still never run (sandbox DNS does not resolve diavgeia.gov.gr). It is
+  tested against a mock API built from the fixture. A review found that its paging counter was shared across
+  the 180-day windows: a full-year run would have kept only the first page of the second window (about 2,440
+  of Athens' 2,940 Jul to Dec acts) with no error. Fixed, with a regression test. SPEC §8 lists the checks.
+- Fixtures were fetched by hand. Record 4 in the fixture (pre-void version) is reconstructed from a field dump, not verbatim.
 
 ## Open questions, in blocking order
 
@@ -66,12 +69,22 @@ a crypto audience.
       Merkle root of payees or to emit one anchor per payee.
 - [ ] Who at the Ministry of Digital Governance owns the Β.2.2 field list, and what making KAE and CPV
       mandatory would take.
+- [ ] Version log `status`: only `PUBLISHED` has been seen. A newer entry with another status (pending,
+      revoked) currently makes that act a `history-error` rather than being filtered, on purpose: filtering
+      on unseen values would be a guess. Decide once live data shows what statuses exist.
 - [ ] Whether diafaneia.ai's team wants a verifier. A diff that is never zero is their problem first.
 
 ## Next steps
 
-1. Run `anchor` + `verify` live for all of Athens 2025 from a machine with network. First real test of the
-   180-day windowing and the version-log walk at scale. Expect surprises in `isVoid` and in multi-sponsor acts.
+1. From a machine with network, in this order:
+   a. `npx tsx src/cli.ts live-check`: must print no `DIFF`. A verbatim record that differs means the fixture
+      or the canonical form is wrong; stop there. A difference on the reconstructed record means the
+      reconstruction was wrong: replace it with the live record.
+   b. `DIAVGEIA_RECORD=fixtures/athens-2025.json npx tsx src/cli.ts anchor --from 2025-01-01 --to 2025-12-31`,
+      then `verify` and `page` on the same range. Expect 5,472 acts (CONTEXT findings) unless the clamp moved.
+      The first real test of the windowing and the version-log walk at scale. Expect surprises in `isVoid`,
+      multi-sponsor acts, and the issueDate time zone (SPEC §8 throws on an Athens-midnight date).
+   c. Commit the recorded fixture only after checking its size and that it holds no `privateData`.
 2. A per-municipality page: anchored total, portal total, difference. The product of Phase 1 is that one number.
    Built (`cli page`) and checked on fixtures only. Still to do: run it on live data, and pass the registry's
    deployment block to `chainReader` on any chain but Anvil (it scans `Anchored` logs from block 0).

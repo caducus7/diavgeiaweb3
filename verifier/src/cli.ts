@@ -5,22 +5,28 @@
  *   deploy  --org 6013 --vat 090025537
  *   anchor  --org 6013 --type Β.2.2 --from 2025-11-24 --to 2025-11-30
  *   verify  --org 6013 --type Β.2.2 --from 2025-11-24 --to 2025-11-30
+ *   live-check [--fixture fixtures/athens-2025-11.json]   (first run with network: fixture vs live API)
  *   page    --org 6013 --type Β.2.2 --from 2025-11-24 --to 2025-11-30 --out out/6013.html
  *   pay     --ada 9ΓΒΝΩ6Μ-Λ4Η            (simulate treasury release through PaymentGate)
  *   award   --ref 24SYMV015873979 --ceiling 30000.00 --cpv 44810000 --kae 6261
  *   link    --ada 9ΓΒΝΩ6Μ-Λ4Η            (link an anchored payment to its award)
  *
  * Set DIAVGEIA_FIXTURE=fixtures/athens-2025-11.json to run without network.
+ * Set DIAVGEIA_RECORD=path.json on a live run to save every record fetched, in the fixture format.
  */
 import { parseArgs } from "node:util";
-import { makeClient } from "./diavgeia.js";
+import { makeClient, BASE } from "./diavgeia.js";
+import { RecordingClient } from "./record.js";
+import { liveCheck, type FixtureFile } from "./livecheck.js";
+import { parseDecision } from "./validate.js";
 import { actHash, adaKey, toCents, isVoid } from "./canonical.js";
+import { isPerActError } from "./validate.js";
 import {
   deploy, loadDeployment, anchorOne, readVersions, gate, graph, ZERO32, publicClient, chainReader,
 } from "./chain.js";
 import { buildReport, versionsOf, formatEur, reportJson, type ReportParams } from "./report.js";
 import { renderPage } from "./page.js";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { parseEventLogs, type Hex } from "viem";
 
@@ -39,11 +45,15 @@ const { positionals, values: a } = parseArgs({
     kae: { type: "string", default: "0" },
     json: { type: "boolean", default: false },
     out: { type: "string" },
+    fixture: { type: "string", default: "fixtures/athens-2025-11.json" },
   },
 });
 
 const cmd = positionals[0];
-const client = makeClient();
+const RECORD = process.env.DIAVGEIA_RECORD;
+if (RECORD && process.env.DIAVGEIA_FIXTURE) { console.error("DIAVGEIA_RECORD records live runs; unset DIAVGEIA_FIXTURE"); process.exit(1); }
+const recorder = RECORD ? new RecordingClient(makeClient(), BASE) : null;
+const client = recorder ?? makeClient();
 const eur = formatEur;
 
 async function cmdDeploy() {
@@ -55,9 +65,17 @@ async function cmdAnchor() {
   const dep = loadDeployment();
   const latest = await client.search({ org: a.org!, type: a.type!, fromIssueDate: a.from!, toIssueDate: a.to! });
   console.log(`${latest.length} acts from Diavgeia (org ${a.org}, ${a.type}, ${a.from}..${a.to})`);
-  let anchored = 0, skipped = 0;
+  let anchored = 0, skipped = 0, failed = 0;
   for (const l of latest) {
-    const vs = await versionsOf(client, l);
+    let vs;
+    try { vs = await versionsOf(client, l); }
+    catch (e) {
+      // Do not anchor an act whose history the portal contradicts; anchor the rest.
+      if (!isPerActError(e)) throw e;
+      failed++;
+      console.warn(`  ! skipped ${l.ada}: ${e.message}`);
+      continue;
+    }
     const onChain = await readVersions(dep, l.ada);
     let prev: Hex = onChain.length ? onChain[onChain.length - 1].actHash : ZERO32;
     for (let i = onChain.length; i < vs.length; i++) {
@@ -69,7 +87,8 @@ async function cmdAnchor() {
     }
     if (vs.length <= onChain.length) skipped++;
   }
-  console.log(`done: ${anchored} versions anchored, ${skipped} ADAs already current`);
+  console.log(`done: ${anchored} versions anchored, ${skipped} ADAs already current${failed ? `, ${failed} skipped on portal errors` : ""}`);
+  if (failed) process.exitCode = 2;
 }
 
 const params = (): ReportParams => ({ org: a.org!, orgVat: a.vat!, type: a.type!, from: a.from!, to: a.to! });
@@ -99,6 +118,19 @@ async function cmdPage() {
   }));
   console.log(`wrote ${out}: portal ${eur(r.portalTotal)}, chain ${eur(r.chainTotal)}, difference ${eur(r.difference)}${r.alarm ? "  ** DISAGREEMENT **" : ""}`);
   if (r.alarm) process.exitCode = 2;
+}
+
+async function cmdLiveCheck() {
+  if (process.env.DIAVGEIA_FIXTURE) throw new Error("live-check compares a fixture with the live API; unset DIAVGEIA_FIXTURE and pass --fixture");
+  const fx = JSON.parse(readFileSync(a.fixture!, "utf8")) as FixtureFile;
+  if (!Array.isArray(fx?.decisions)) throw new Error(`${a.fixture}: no decisions array`);
+  fx.decisions.forEach((d, i) => parseDecision(d, `${a.fixture} decisions[${i}]`));
+  const lines = await liveCheck(client, fx);
+  console.log(`live-check: ${a.fixture} against the live API`);
+  for (const l of lines) console.log(`  ${l.ok ? "ok  " : "DIFF"} ${l.what.padEnd(40)} ${l.detail}`);
+  const bad = lines.filter((l) => !l.ok).length;
+  console.log(bad ? `\n  ${bad} difference(s). A verbatim record that differs blocks trusting anchors; see CONTEXT.md.` : "\n  fixture matches the live API");
+  if (bad) process.exitCode = 2;
 }
 
 async function cmdPay() {
@@ -148,6 +180,16 @@ function revertName(e: unknown): string {
   return (e as Error).message.split("\n")[0];
 }
 
-const cmds: Record<string, () => Promise<void>> = { deploy: cmdDeploy, anchor: cmdAnchor, verify: cmdVerify, page: cmdPage, pay: cmdPay, award: cmdAward, link: cmdLink };
+const cmds: Record<string, () => Promise<void>> = { deploy: cmdDeploy, anchor: cmdAnchor, verify: cmdVerify, page: cmdPage, "live-check": cmdLiveCheck, pay: cmdPay, award: cmdAward, link: cmdLink };
 if (!cmd || !cmds[cmd]) { console.error(`usage: cli <${Object.keys(cmds).join("|")}> [options]`); process.exit(1); }
-cmds[cmd]().catch((e) => { console.error(e); process.exit(1); });
+/** Save what a live run fetched. Never writes an empty file (deploy, pay, ... fetch nothing), and keeps a
+ *  partial recording of a failed run, marked as such, so the failure can be replayed offline. */
+function saveRecording(failure?: string) {
+  if (!recorder || !RECORD || recorder.size === 0) return;
+  recorder.save(RECORD, new Date(), failure);
+  console.error(`recorded ${recorder.size} record(s) to ${RECORD}${failure ? " (partial: the run failed)" : ""}`);
+}
+
+cmds[cmd]()
+  .then(() => saveRecording())
+  .catch((e) => { saveRecording(String((e as Error)?.message ?? e)); console.error(e); process.exit(1); });

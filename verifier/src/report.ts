@@ -10,6 +10,7 @@
 import type { Hex } from "viem";
 import { actHash, isVoid, toCents, unixDay, vatToUint, type DiavgeiaDecision } from "./canonical.js";
 import type { DiavgeiaClient } from "./diavgeia.js";
+import { parseIsoDay, isPerActError, PortalInconsistentError } from "./validate.js";
 
 /** The fields of an on-chain anchor the report reads. */
 export interface ChainVersion {
@@ -26,10 +27,10 @@ export interface ChainReader {
   anchoredAdas(): Promise<string[]>;
 }
 
-export type Status = "ok" | "void" | "unanchored" | "chain-behind" | "mismatch" | "chain-ahead" | "portal-missing";
+export type Status = "ok" | "void" | "unanchored" | "chain-behind" | "mismatch" | "chain-ahead" | "portal-missing" | "history-error";
 
 /** Statuses that mean the portal and the chain disagree about published content. */
-export const ALARM: ReadonlySet<Status> = new Set(["mismatch", "chain-ahead", "portal-missing"]);
+export const ALARM: ReadonlySet<Status> = new Set(["mismatch", "chain-ahead", "portal-missing", "history-error"]);
 
 export interface Finding {
   ada: string;
@@ -60,11 +61,17 @@ export interface Report {
   alarm: boolean;
 }
 
-/** All versions of an ADA, oldest first, using the version log where the API has one. */
+/** All versions of an ADA, oldest first, using the version log where the API has one.
+ *  The search result is the latest version, so the log must contain it and end with it; otherwise the
+ *  portal is inconsistent with itself and comparing against it would be meaningless. */
 export async function versionsOf(client: DiavgeiaClient, latest: DiavgeiaDecision, warn = console.warn): Promise<DiavgeiaDecision[]> {
   const log = await client.versionLog(latest.ada);
-  if (!log || log.versions.length <= 1) return [latest];
+  if (!log) return [latest];
   const ordered = [...log.versions].sort((x, y) => x.versionTimestamp - y.versionTimestamp);
+  const last = ordered[ordered.length - 1];
+  if (last.versionId !== latest.versionId) {
+    throw new PortalInconsistentError(latest.ada, `search returned version ${latest.versionId} but the version log's latest is ${last.versionId}`);
+  }
   const out: DiavgeiaDecision[] = [];
   for (const v of ordered) {
     if (v.versionId === latest.versionId) { out.push(latest); continue; }
@@ -78,6 +85,8 @@ export async function versionsOf(client: DiavgeiaClient, latest: DiavgeiaDecisio
 const firstAmount = (d: DiavgeiaDecision): bigint => toCents(d.extraFieldValues?.sponsor?.[0]?.expenseAmount?.amount);
 
 export async function buildReport(client: DiavgeiaClient, chain: ChainReader, p: ReportParams): Promise<Report> {
+  const fromDay = unixDay(parseIsoDay(p.from, "from")), toDay = unixDay(parseIsoDay(p.to, "to"));
+  if (fromDay > toDay) throw new Error(`from ${p.from} is after to ${p.to}`);
   const latest = await client.search({ org: p.org, type: p.type, fromIssueDate: p.from, toIssueDate: p.to });
   // The portal-missing scan filters anchors by orgVat. A wrong VAT (e.g. the Athens default with another
   // --org) would silently hide deletions, so refuse rather than report on the wrong organisation.
@@ -94,19 +103,26 @@ export async function buildReport(client: DiavgeiaClient, chain: ChainReader, p:
     if (sponsors.length > 1) multiPayee++;
     if (sponsors.some((s) => (s.expenseAmount?.currency ?? "EUR") !== "EUR")) nonEur++;
 
-    const vs = await versionsOf(client, l);
-    const onChain = await chain.versions(l.ada);
     const portalCents = firstAmount(l);
     const voided = isVoid(l.subject);
     if (!voided) portalTotal += portalCents;
+    const onChain = await chain.versions(l.ada);
+    const last = onChain.length ? onChain[onChain.length - 1] : null;
+    if (last && !last.voided) chainTotal += last.amountCents;
 
-    const f = (status: Status, detail: string, chainCents: bigint | null) =>
-      findings.push({ ada: l.ada, status, detail, portalCents, chainCents });
+    const f = (status: Status, detail: string) =>
+      findings.push({ ada: l.ada, status, detail, portalCents, chainCents: last ? last.amountCents : null });
 
-    if (onChain.length === 0) { f("unanchored", `portal has ${vs.length} version(s), chain has none`, null); continue; }
+    let vs: DiavgeiaDecision[];
+    try { vs = await versionsOf(client, l); }
+    catch (e) {
+      // One act's history is unusable; report it and carry on. Network failures still abort the run.
+      if (!isPerActError(e)) throw e;
+      f("history-error", e.message);
+      continue;
+    }
 
-    const last = onChain[onChain.length - 1];
-    if (!last.voided) chainTotal += last.amountCents;
+    if (!last) { f("unanchored", `portal has ${vs.length} version(s), chain has none`); continue; }
 
     // Compare position by position. The chain may lag the portal (a version not
     // yet anchored) but must never disagree with it on a version both hold.
@@ -116,18 +132,17 @@ export async function buildReport(client: DiavgeiaClient, chain: ChainReader, p:
       if (onChain[i].actHash !== actHash(vs[i])) { diverged = i; break; }
     }
     if (diverged >= 0) {
-      f("mismatch", `version ${diverged + 1} on chain ${onChain[diverged].actHash.slice(0, 12)}… but portal's hashes to ${actHash(vs[diverged]).slice(0, 12)}…`, last.amountCents);
+      f("mismatch", `version ${diverged + 1} on chain ${onChain[diverged].actHash.slice(0, 12)}… but portal's hashes to ${actHash(vs[diverged]).slice(0, 12)}…`);
       continue;
     }
-    if (onChain.length > vs.length) { f("chain-ahead", `chain has ${onChain.length} versions, portal shows ${vs.length}`, last.amountCents); continue; }
-    if (onChain.length < vs.length) { f("chain-behind", `chain has ${onChain.length} of ${vs.length} portal versions; the rest are not anchored yet`, last.amountCents); continue; }
-    f(voided ? "void" : "ok", voided ? `voided in v${vs.length}; earlier versions still on chain` : `${vs.length} version(s) match`, last.amountCents);
+    if (onChain.length > vs.length) { f("chain-ahead", `chain has ${onChain.length} versions, portal shows ${vs.length}`); continue; }
+    if (onChain.length < vs.length) { f("chain-behind", `chain has ${onChain.length} of ${vs.length} portal versions; the rest are not anchored yet`); continue; }
+    f(voided ? "void" : "ok", voided ? `voided in v${vs.length}; earlier versions still on chain` : `${vs.length} version(s) match`);
   }
 
   // Anchored acts for this org and window that the portal no longer returns.
   // Without this a deletion from the portal would be invisible.
   const seen = new Set(latest.map((l) => l.ada.normalize("NFC")));
-  const fromDay = unixDay(Date.parse(p.from)), toDay = unixDay(Date.parse(p.to));
   for (const ada of await chain.anchoredAdas()) {
     if (seen.has(ada.normalize("NFC"))) continue;
     const onChain = await chain.versions(ada);

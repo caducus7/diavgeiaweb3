@@ -113,16 +113,29 @@ first on-chain. PaymentGate therefore handles single-payee acts only. Multi-paye
 position by position. Statuses:
 `ok`, `void` (latest version voids; earlier versions still on chain), `unanchored`, `mismatch` (a version
 both sides hold differs), `chain-ahead` (chain has versions the portal no longer shows), `chain-behind`
-(chain holds a matching prefix of the portal's versions; the rest are not anchored yet).
+(chain holds a matching prefix of the portal's versions; the rest are not anchored yet), `history-error`
+(the portal contradicts itself about this act's history: the version log does not end with the version search
+returned, a version record is for a different version, or the log or an earlier version fails the shape
+checks of §8). A search record that fails §8 is not scoped to its act: it aborts the run, because the totals
+cannot be computed honestly without it.
 Then, for every ADA in the registry's `Anchored` logs whose latest anchor has the org's `payerVat` and an
 `issueDate` inside the window but which the portal did not return: `portal-missing`. Its amount counts in
 the chain total.
-Prints portal and chain non-void totals and their difference. Exit 2 if any `mismatch`, `chain-ahead` or
-`portal-missing` (also with `--json`). `chain-behind` and `unanchored` are lag, not disagreement.
+Prints portal and chain non-void totals and their difference. Exit 2 if any `mismatch`, `chain-ahead`,
+`portal-missing` or `history-error` (also with `--json`). A `history-error` is scoped to its act: the run
+carries on. A network or HTTP failure aborts the run (exit 1) rather than producing partial totals. `chain-behind` and `unanchored` are lag, not disagreement.
 
 `page`: the same reconciliation rendered as one static HTML file (no scripts, no external requests). It
 shows ADAs, statuses and amounts only; subjects and payee names are left out. It states its data source
 (live or fixture) and the caveats on the totals. Same exit code as `verify`.
+
+`anchor` skips an act whose history is a `history-error`, anchors the rest, and exits 2.
+
+`live-check --fixture f.json`: re-runs the search in the fixture's `_source` against the live API and
+compares canonical hashes per versionId. Reports acts missing on either side, live versions newer than the
+fixture, and per-act errors as `DIFF` lines. Exit 2 on any difference.
+
+`DIAVGEIA_RECORD=f.json` on a live run saves every record and version log fetched, in the fixture format.
 
 Heuristics, flagged as such in code:
 - `isVoid(subject)`: subject starts with `ΑΚΥΡΟ` or `ΑΚΥΡΩΤΙΚ`. Diavgeia has no structured void flag.
@@ -141,3 +154,26 @@ Heuristics, flagged as such in code:
   `/decisions/v/{versionId}.json` returns an earlier version's content.
 - `/signers/{id}.json` returns name, org, position, `activeFrom`, `activeUntil`, `hasOrganizationSignRights`.
 - Β.2.2 acts carry no KAE or CPV. Those are on the commitment act (Β.2.1) and the KIMDIS award.
+
+## 8. Ingestion checks (`verifier/src/validate.ts`, `diavgeia.ts`)
+
+Every record, from the live API or a fixture, passes these before it is hashed or summed. A failure is an
+error, never a default.
+
+- Types of every field the canonical form or the anchor reads: `ada`, `versionId`, `organizationId`,
+  `decisionTypeId` non-empty strings; `subject` string; `issueDate` integer; `signerIds` array of strings,
+  or missing or null (hashed as `[]`);
+  `correctedVersionId`, `protocolNumber`, org and payee strings or null.
+- `ada` at most 32 UTF-8 bytes (it must fit `adaKey`).
+- Amounts: finite, non-negative, at most 1e12 EUR, and at most two decimals (§2: rejected, not rounded).
+  The cap matters: above about 7e13 adjacent doubles are more than a cent apart and the two-decimal test
+  stops being exact. Tested by sampling the whole range up to the cap.
+- Search: `info.actualSize` equals the number of decisions; every act has the requested `org` and `type`
+  (NFC) and an `issueDate` inside the requested window, in UTC days. FixtureClient filters with the same
+  function (`outsideQuery`), so a recorded run replays to the same acts.
+- Paging is counted per window. A window whose distinct versions do not equal its `info.total` is an error
+  (catches an ignored `page` parameter). The live client uses 90-day windows, half the observed 180-day
+  clamp, so an off-by-one in the API's convention cannot drop a day.
+- Version log: non-empty, for the requested ADA, and its latest entry is the version search returned.
+- HTTP: 404 means absent; 429, 5xx and network errors are retried 3 times with backoff; anything else, and
+  a non-JSON body, is an error.
