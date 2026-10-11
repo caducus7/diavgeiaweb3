@@ -25,7 +25,9 @@ DIAVGEIA_FIXTURE=fixtures/athens-2025-11.json npx tsx src/cli.ts deploy
 DIAVGEIA_FIXTURE=fixtures/athens-2025-11.json npx tsx src/cli.ts anchor
 DIAVGEIA_FIXTURE=fixtures/athens-2025-11.json npx tsx src/cli.ts verify   # exit 2 on any disagreement
 DIAVGEIA_FIXTURE=fixtures/athens-2025-11.json npx tsx src/cli.ts page     # writes out/<org>-<from>-<to>.html
-npx tsx src/cli.ts live-check     # with network: fixture vs live API. Run this first in any session that can reach it
+NODE_USE_ENV_PROXY=1 npx tsx src/cli.ts live-check   # with network: fixture vs live API. Run first in any session that can reach it
+NODE_USE_ENV_PROXY=1 npx tsx src/cli.ts record --from 2025-01-01 --to 2025-12-31 --out out/athens-2025.json  # ~4 min
+DIAVGEIA_FIXTURE=out/athens-2025.json npx tsx src/cli.ts anchor --from 2025-01-01 --to 2025-12-31   # ~7 min on Anvil
 ```
 
 Unset `DIAVGEIA_FIXTURE` to use the live API at https://diavgeia.gov.gr/opendata.
@@ -37,10 +39,11 @@ Unset `DIAVGEIA_FIXTURE` to use the live API at https://diavgeia.gov.gr/opendata
 - solc: `binaries.soliditylang.org` may be blocked. Download
   `https://github.com/ethereum/solidity/releases/download/v0.8.28/solc-static-linux`, `chmod +x`, then run
   `FOUNDRY_SOLC=/abs/path/solc-0.8.28 forge test`. Don't commit a local path into `foundry.toml`.
-- `diavgeia.gov.gr` may be blocked from the shell. Check with `curl -sI https://diavgeia.gov.gr/opendata/organizations/6013.json`
-  before assuming the live client works. If blocked, work from fixtures and say so. Observed 2026-10-11: Node's
-  fetch reached allowed hosts with no proxy settings, and a blocked host showed as `fetch failed (ENOTFOUND)`
-  where curl showed a 403. `NODE_USE_ENV_PROXY=1` broke hosts that otherwise worked; leave it unset.
+- `diavgeia.gov.gr` may be blocked from the shell. Check with
+  `curl -s -o /dev/null -w '%{http_code}\n' https://diavgeia.gov.gr/opendata/organizations/6013.json` (200 means
+  reachable; HEAD gets 405 from Diavgeia, so `curl -I` misleads) before assuming the live client works. If blocked, work from fixtures and say so. Node's fetch ignores
+  `HTTPS_PROXY`: run live commands with `NODE_USE_ENV_PROXY=1` (Node >= 22.21), or they fail with
+  `fetch failed (ENOTFOUND)` even when curl works. Verified 2026-10-11 once diavgeia.gov.gr was allowlisted.
 - Anvil default account 0 key ends in `...d7bf4f2ff80`. A typo here cost an hour once.
 
 ## Rules

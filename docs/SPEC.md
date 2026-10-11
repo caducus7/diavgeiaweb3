@@ -113,7 +113,9 @@ first on-chain. PaymentGate therefore handles single-payee acts only. Multi-paye
 position by position. Statuses:
 `ok`, `void` (latest version voids; earlier versions still on chain), `unanchored`, `mismatch` (a version
 both sides hold differs), `chain-ahead` (chain has versions the portal no longer shows), `chain-behind`
-(chain holds a matching prefix of the portal's versions; the rest are not anchored yet), `history-error`
+(chain holds a matching prefix of the portal's versions; the detail says whether the rest are merely not yet
+anchored or blocked: after a void, or behind a version whose payer is not the org), `unanchorable` (nothing
+anchored and the act's payer VAT is not the org's, so the org's signer cannot anchor it), `history-error`
 (the portal contradicts itself about this act's history: the version log does not end with the version search
 returned, a version record is for a different version, or the log or an earlier version fails the shape
 checks of §8). A search record that fails §8 is not scoped to its act: it aborts the run, because the totals
@@ -123,13 +125,22 @@ Then, for every ADA in the registry's `Anchored` logs whose latest anchor has th
 the chain total.
 Prints portal and chain non-void totals and their difference. Exit 2 if any `mismatch`, `chain-ahead`,
 `portal-missing` or `history-error` (also with `--json`). A `history-error` is scoped to its act: the run
-carries on. A network or HTTP failure aborts the run (exit 1) rather than producing partial totals. `chain-behind` and `unanchored` are lag, not disagreement.
+carries on. A network or HTTP failure aborts the run (exit 1) rather than producing partial totals.
+`--vat` is checked against the acts: it is an error only when fewer than half carry it (a wrong `--vat`);
+single acts with another payer are `unanchorable` findings. `chain-behind` and `unanchored` are lag, not disagreement.
 
 `page`: the same reconciliation rendered as one static HTML file (no scripts, no external requests). It
 shows ADAs, statuses and amounts only; subjects and payee names are left out. It states its data source
 (live or fixture) and the caveats on the totals. Same exit code as `verify`.
 
-`anchor` skips an act whose history is a `history-error`, anchors the rest, and exits 2.
+`anchor` skips an act whose history is a `history-error` (exit 2). It checks each version before sending it,
+with the same rule the report uses (`anchorBlocker`): a version whose payer is not the signer's org, or any
+version after a void, is not sent, and neither is anything after it; earlier versions of that act are still
+anchored. These registry refusals are logged and exit 0, since they are permanent facts about the data that
+`verify` reports. Any other revert is logged per act; an RPC failure aborts.
+
+`record --out f.json`: fetches a window and every act's history once (4 requests at a time) and saves it in
+the fixture format, so `anchor`, `verify` and `page` can run offline on it.
 
 `live-check --fixture f.json`: re-runs the search in the fixture's `_source` against the live API and
 compares canonical hashes per versionId. Reports acts missing on either side, live versions newer than the
@@ -153,6 +164,12 @@ Heuristics, flagged as such in code:
 - `/decisions/{ada}/versionlog.json` lists versions with `correctedVersionId` links.
   `/decisions/v/{versionId}.json` returns an earlier version's content.
 - `/signers/{id}.json` returns name, org, position, `activeFrom`, `activeUntil`, `hasOrganizationSignRights`.
+- `to_issue_date` excludes that day (verified 2026-10-11). `info.query` shows the range is run as
+  `issueDate:[DT(from 00:00 Athens) TO DT(to 00:00 Athens)]` while `issueDate` is stored at 00:00 UTC, so acts
+  issued on `to` fall outside: 2025-03-31..2025-03-31 returns 0 acts, 2025-03-31..2025-04-01 returns the 25 of
+  31 March. The client sends `to + 1 day`.
+- `issueDate` is 00:00 UTC on all but one of 5,667 Athens 2025 versions (one at 06:54 UTC).
+- Version log `status` was `PUBLISHED` on every entry of Athens 2025.
 - Β.2.2 acts carry no KAE or CPV. Those are on the commitment act (Β.2.1) and the KIMDIS award.
 
 ## 8. Ingestion checks (`verifier/src/validate.ts`, `diavgeia.ts`)

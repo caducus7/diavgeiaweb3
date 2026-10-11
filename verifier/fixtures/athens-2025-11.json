@@ -1,6 +1,7 @@
 {
   "_source": "https://diavgeia.gov.gr/opendata/search.json?org=6013&type=Β.2.2&from_issue_date=2025-11-24&to_issue_date=2025-11-30",
   "_fetched": "2026-10-11",
+  "_sample": "4 of the 72 acts the _source query returned on 2026-10-11, chosen by hand. live-check treats other live acts in the window as expected.",
   "_notes": [
     "Records 0-3 are verbatim API output.",
     "Record 4 is the ORIGINAL version of ΨΟΣΝΩ6Μ-Θ6Ε (versionId 303d2b3a…), reconstructed field by field from /opendata/decisions/v/303d2b3a-90a2-4a17-a6b2-79421af7095e.json and the versionlog; the sponsor name is assumed identical to the later version. Its subject lacked the later 'ΑΚΥΡΟ ΧΡΗΜΑΤΙΚΟ ΕΝΤΑΛΜΑ.' prefix."

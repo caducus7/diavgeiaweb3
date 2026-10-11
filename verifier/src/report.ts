@@ -27,7 +27,7 @@ export interface ChainReader {
   anchoredAdas(): Promise<string[]>;
 }
 
-export type Status = "ok" | "void" | "unanchored" | "chain-behind" | "mismatch" | "chain-ahead" | "portal-missing" | "history-error";
+export type Status = "ok" | "void" | "unanchored" | "unanchorable" | "chain-behind" | "mismatch" | "chain-ahead" | "portal-missing" | "history-error";
 
 /** Statuses that mean the portal and the chain disagree about published content. */
 export const ALARM: ReadonlySet<Status> = new Set(["mismatch", "chain-ahead", "portal-missing", "history-error"]);
@@ -58,6 +58,7 @@ export interface Report {
   counts: Partial<Record<Status, number>>;
   multiPayee: number;
   nonEur: number;
+  noAmount: number; // acts whose first payee carries no amount (payroll, for one): invisible in both totals
   alarm: boolean;
 }
 
@@ -82,6 +83,16 @@ export async function versionsOf(client: DiavgeiaClient, latest: DiavgeiaDecisio
   return out;
 }
 
+/** Why the registry would refuse to append `next` after the chain's current `last` version, or null.
+ *  Mirrors ActRegistry.anchor's per-version checks; used by `anchor` (to skip with a reason) and by the report
+ *  (to say whether a lagging chain is merely behind or blocked), so the two cannot drift. */
+export function anchorBlocker(next: DiavgeiaDecision, last: { voided: boolean } | null, orgVat: bigint): string | null {
+  if (last?.voided) return "the registry accepts nothing after a void, and the chain holds this act as voided";
+  const payer = next.extraFieldValues?.org?.afm;
+  if (vatToUint(payer ?? "") !== orgVat) return `payer VAT ${payer || "(none)"} is not the org's, so the org's signer cannot anchor it`;
+  return null;
+}
+
 const firstAmount = (d: DiavgeiaDecision): bigint => toCents(d.extraFieldValues?.sponsor?.[0]?.expenseAmount?.amount);
 
 export async function buildReport(client: DiavgeiaClient, chain: ChainReader, p: ReportParams): Promise<Report> {
@@ -91,10 +102,15 @@ export async function buildReport(client: DiavgeiaClient, chain: ChainReader, p:
   // The portal-missing scan filters anchors by orgVat. A wrong VAT (e.g. the Athens default with another
   // --org) would silently hide deletions, so refuse rather than report on the wrong organisation.
   const orgVat = vatToUint(p.orgVat);
-  const wrong = latest.find((l) => vatToUint(l.extraFieldValues?.org?.afm ?? "") !== orgVat);
-  if (wrong) throw new Error(`org ${p.org} acts carry VAT ${wrong.extraFieldValues?.org?.afm}, not ${p.orgVat}; pass --vat`);
+  // Single acts with another payer are real (Athens 2025 has one with payer and payee swapped, and one with no
+  // payer); they are reported per act below. Most acts disagreeing means --vat is wrong.
+  // Windows under 3 acts are exempt: one odd act there would otherwise abort a correct --vat.
+  const matching = latest.filter((l) => vatToUint(l.extraFieldValues?.org?.afm ?? "") === orgVat).length;
+  if (latest.length >= 3 && matching * 2 < latest.length) {
+    throw new Error(`only ${matching} of ${latest.length} org ${p.org} acts carry VAT ${p.orgVat}; pass --vat with the org's VAT`);
+  }
   const findings: Finding[] = [];
-  let portalTotal = 0n, chainTotal = 0n, multiPayee = 0, nonEur = 0;
+  let portalTotal = 0n, chainTotal = 0n, multiPayee = 0, nonEur = 0, noAmount = 0;
   let orgName: string | null = null;
 
   for (const l of latest) {
@@ -102,6 +118,7 @@ export async function buildReport(client: DiavgeiaClient, chain: ChainReader, p:
     const sponsors = l.extraFieldValues?.sponsor ?? [];
     if (sponsors.length > 1) multiPayee++;
     if (sponsors.some((s) => (s.expenseAmount?.currency ?? "EUR") !== "EUR")) nonEur++;
+    if (sponsors[0]?.expenseAmount?.amount == null && !isVoid(l.subject)) noAmount++;
 
     const portalCents = firstAmount(l);
     const voided = isVoid(l.subject);
@@ -122,7 +139,13 @@ export async function buildReport(client: DiavgeiaClient, chain: ChainReader, p:
       continue;
     }
 
-    if (!last) { f("unanchored", `portal has ${vs.length} version(s), chain has none`); continue; }
+    if (!last) {
+      // Judge by v1, the version the registry would see first; a later bad version only blocks what follows it.
+      const why = anchorBlocker(vs[0], null, orgVat);
+      if (why) f("unanchorable", `v1: ${why}`);
+      else f("unanchored", `portal has ${vs.length} version(s), chain has none`);
+      continue;
+    }
 
     // Compare position by position. The chain may lag the portal (a version not
     // yet anchored) but must never disagree with it on a version both hold.
@@ -136,7 +159,13 @@ export async function buildReport(client: DiavgeiaClient, chain: ChainReader, p:
       continue;
     }
     if (onChain.length > vs.length) { f("chain-ahead", `chain has ${onChain.length} versions, portal shows ${vs.length}`); continue; }
-    if (onChain.length < vs.length) { f("chain-behind", `chain has ${onChain.length} of ${vs.length} portal versions; the rest are not anchored yet`); continue; }
+    if (onChain.length < vs.length) {
+      const why = anchorBlocker(vs[onChain.length], last, orgVat);
+      f("chain-behind", why
+        ? `chain has ${onChain.length} of ${vs.length} portal versions; v${onChain.length + 1} is blocked (${why}), and every later version with it`
+        : `chain has ${onChain.length} of ${vs.length} portal versions; the rest are not anchored yet`);
+      continue;
+    }
     f(voided ? "void" : "ok", voided ? `voided in v${vs.length}; earlier versions still on chain` : `${vs.length} version(s) match`);
   }
 
@@ -155,7 +184,7 @@ export async function buildReport(client: DiavgeiaClient, chain: ChainReader, p:
   const counts: Partial<Record<Status, number>> = {};
   for (const x of findings) counts[x.status] = (counts[x.status] ?? 0) + 1;
   return {
-    params: p, orgName, findings, portalTotal, chainTotal, difference: portalTotal - chainTotal, counts, multiPayee, nonEur,
+    params: p, orgName, findings, portalTotal, chainTotal, difference: portalTotal - chainTotal, counts, multiPayee, nonEur, noAmount,
     alarm: findings.some((x) => ALARM.has(x.status)),
   };
 }

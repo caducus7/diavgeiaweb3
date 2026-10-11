@@ -6,17 +6,23 @@
 import { writeFileSync } from "node:fs";
 import type { DiavgeiaDecision } from "./canonical.js";
 import type { DiavgeiaClient, SearchParams, VersionLog } from "./diavgeia.js";
+import { versionsOf } from "./report.js";
+import { isPerActError } from "./validate.js";
 
 export class RecordingClient implements DiavgeiaClient {
   private decisions = new Map<string, DiavgeiaDecision>();
   private logs: Record<string, VersionLog> = {};
   private searches: string[] = [];
+  private query: { org: string; type: string; from: string; to: string } | null = null;
 
   constructor(private inner: DiavgeiaClient, private source: string) {}
 
   async search(p: SearchParams): Promise<DiavgeiaDecision[]> {
     const r = await this.inner.search(p);
-    this.searches.push(`${this.source}/search.json?org=${p.org}&type=${p.type}&from_issue_date=${p.fromIssueDate}&to_issue_date=${p.toIssueDate}`);
+    // The URL as the live client sends it: to_issue_date is exclusive in the API, so it carries `to` + 1 day.
+    const toExcl = new Date(Date.parse(p.toIssueDate) + 86_400_000).toISOString().slice(0, 10);
+    this.searches.push(`${this.source}/search.json?org=${p.org}&type=${p.type}&from_issue_date=${p.fromIssueDate}&to_issue_date=${toExcl}`);
+    this.query ??= { org: p.org, type: p.type, from: p.fromIssueDate, to: p.toIssueDate };
     for (const d of r) this.decisions.set(d.versionId, d);
     return r;
   }
@@ -39,6 +45,7 @@ export class RecordingClient implements DiavgeiaClient {
    *  `failure` marks a partial recording of a run that failed, kept so the failure can be replayed. */
   save(path: string, fetched = new Date(), failure?: string): void {
     const out = {
+      _query: this.query, // inclusive dates; what live-check re-runs
       _source: this.searches[0] ?? null,
       _searches: this.searches,
       _fetched: fetched.toISOString().slice(0, 10),
@@ -49,4 +56,30 @@ export class RecordingClient implements DiavgeiaClient {
     };
     writeFileSync(path, JSON.stringify(out, null, 2) + "\n");
   }
+}
+
+export interface PrefetchResult { acts: number; versions: number; perActErrors: Array<{ ada: string; error: string }>; missingVersions: string[] }
+
+/** Fetch a search and the full history of every act in it, `concurrency` requests at a time, into `rec`.
+ *  Per-act errors are collected, not thrown, so one bad act does not lose the rest of a long fetch. */
+export async function prefetch(rec: RecordingClient, p: SearchParams, concurrency = 4, progress?: (done: number, total: number) => void): Promise<PrefetchResult> {
+  if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 8) throw new Error(`concurrency must be 1 to 8, got ${concurrency}`);
+  const latest = await rec.search(p);
+  const perActErrors: PrefetchResult["perActErrors"] = [];
+  const missingVersions: string[] = [];
+  let next = 0, done = 0, versions = 0;
+  const worker = async () => {
+    while (next < latest.length) {
+      const l = latest[next++];
+      // Await first: `versions += await ...` reads `versions` before the await and loses concurrent updates.
+      try { const n = (await versionsOf(rec, l, (msg) => missingVersions.push(msg.trim()))).length; versions += n; }
+      catch (e) {
+        if (!isPerActError(e)) throw e;
+        perActErrors.push({ ada: l.ada, error: e.message });
+      }
+      progress?.(++done, latest.length);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, latest.length) }, worker));
+  return { acts: latest.length, versions, perActErrors, missingVersions };
 }

@@ -6,6 +6,7 @@
  *   anchor  --org 6013 --type Β.2.2 --from 2025-11-24 --to 2025-11-30
  *   verify  --org 6013 --type Β.2.2 --from 2025-11-24 --to 2025-11-30
  *   live-check [--fixture fixtures/athens-2025-11.json]   (first run with network: fixture vs live API)
+ *   record  --org 6013 --type Β.2.2 --from 2025-01-01 --to 2025-12-31 --out f.json [--concurrency 4]
  *   page    --org 6013 --type Β.2.2 --from 2025-11-24 --to 2025-11-30 --out out/6013.html
  *   pay     --ada 9ΓΒΝΩ6Μ-Λ4Η            (simulate treasury release through PaymentGate)
  *   award   --ref 24SYMV015873979 --ceiling 30000.00 --cpv 44810000 --kae 6261
@@ -16,19 +17,19 @@
  */
 import { parseArgs } from "node:util";
 import { makeClient, BASE } from "./diavgeia.js";
-import { RecordingClient } from "./record.js";
+import { RecordingClient, prefetch } from "./record.js";
 import { liveCheck, type FixtureFile } from "./livecheck.js";
 import { parseDecision } from "./validate.js";
-import { actHash, adaKey, toCents, isVoid } from "./canonical.js";
+import { actHash, adaKey, toCents, isVoid, vatToUint } from "./canonical.js";
 import { isPerActError } from "./validate.js";
 import {
   deploy, loadDeployment, anchorOne, readVersions, gate, graph, ZERO32, publicClient, chainReader,
 } from "./chain.js";
-import { buildReport, versionsOf, formatEur, reportJson, type ReportParams } from "./report.js";
+import { buildReport, versionsOf, formatEur, reportJson, anchorBlocker, type ReportParams } from "./report.js";
 import { renderPage } from "./page.js";
 import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { parseEventLogs, type Hex } from "viem";
+import { parseEventLogs, BaseError, ContractFunctionRevertedError, type Hex } from "viem";
 
 const { positionals, values: a } = parseArgs({
   allowPositionals: true,
@@ -46,6 +47,7 @@ const { positionals, values: a } = parseArgs({
     json: { type: "boolean", default: false },
     out: { type: "string" },
     fixture: { type: "string", default: "fixtures/athens-2025-11.json" },
+    concurrency: { type: "string", default: "4" },
   },
 });
 
@@ -65,7 +67,7 @@ async function cmdAnchor() {
   const dep = loadDeployment();
   const latest = await client.search({ org: a.org!, type: a.type!, fromIssueDate: a.from!, toIssueDate: a.to! });
   console.log(`${latest.length} acts from Diavgeia (org ${a.org}, ${a.type}, ${a.from}..${a.to})`);
-  let anchored = 0, skipped = 0, failed = 0;
+  let anchored = 0, skipped = 0, failed = 0, refused = 0;
   for (const l of latest) {
     let vs;
     try { vs = await versionsOf(client, l); }
@@ -77,17 +79,37 @@ async function cmdAnchor() {
       continue;
     }
     const onChain = await readVersions(dep, l.ada);
+    if (vs.length <= onChain.length) { skipped++; continue; }
     let prev: Hex = onChain.length ? onChain[onChain.length - 1].actHash : ZERO32;
+    let lastVoided = onChain.length ? onChain[onChain.length - 1].voided : null;
     for (let i = onChain.length; i < vs.length; i++) {
       const d = vs[i];
-      const v = await anchorOne(dep, d, prev);
+      // The registry's own refusals, checked per version so earlier good versions still go on chain.
+      const why = anchorBlocker(d, lastVoided === null ? null : { voided: lastVoided }, vatToUint(dep.signerOrgVat));
+      if (why) {
+        refused++;
+        console.warn(`  ! not anchored ${d.ada} v${i + 1}${i + 1 < vs.length ? ` (and ${vs.length - i - 1} later)` : ""}: ${why}`);
+        break;
+      }
+      let v: number;
+      try { v = await anchorOne(dep, d, prev); }
+      catch (e) {
+        // A contract refusal concerns this act only; anything else (RPC down) aborts.
+        if (!(e instanceof BaseError && e.walk((x) => x instanceof ContractFunctionRevertedError))) throw e;
+        refused++;
+        console.warn(`  ! not anchored ${d.ada} v${i + 1}: registry refused with ${revertName(e)}`);
+        break;
+      }
       prev = actHash(d);
+      lastVoided = isVoid(d.subject);
       anchored++;
       console.log(`  anchored ${d.ada} v${v} ${isVoid(d.subject) ? "[VOID] " : ""}${eur(toCents(d.extraFieldValues?.sponsor?.[0]?.expenseAmount?.amount))}  ${actHash(d).slice(0, 18)}…`);
     }
-    if (vs.length <= onChain.length) skipped++;
   }
-  console.log(`done: ${anchored} versions anchored, ${skipped} ADAs already current${failed ? `, ${failed} skipped on portal errors` : ""}`);
+  console.log(`done: ${anchored} versions anchored, ${skipped} ADAs already current`
+    + (failed ? `, ${failed} skipped on portal errors` : "") + (refused ? `, ${refused} refused by registry rules (see above)` : ""));
+  // Registry refusals are permanent facts about the data (verify reports them, not as alarms); exit 2 is kept
+  // for portal inconsistencies, which may change between runs.
   if (failed) process.exitCode = 2;
 }
 
@@ -118,6 +140,31 @@ async function cmdPage() {
   }));
   console.log(`wrote ${out}: portal ${eur(r.portalTotal)}, chain ${eur(r.chainTotal)}, difference ${eur(r.difference)}${r.alarm ? "  ** DISAGREEMENT **" : ""}`);
   if (r.alarm) process.exitCode = 2;
+}
+
+/** Fetch a window and every act's history once, save it as a fixture, and run anchor/verify/page offline on it.
+ *  Kinder to the API than three live passes, and the result is replayable. */
+async function cmdRecord() {
+  if (process.env.DIAVGEIA_FIXTURE) throw new Error("record fetches from the live API; unset DIAVGEIA_FIXTURE");
+  if (!a.out) throw new Error("--out path.json required");
+  const rec = new RecordingClient(makeClient(), BASE);
+  const t0 = Date.now();
+  let last = 0;
+  let r;
+  try {
+    r = await prefetch(rec, { org: a.org!, type: a.type!, fromIssueDate: a.from!, toIssueDate: a.to! }, Number(a.concurrency), (done, total) => {
+      if (done === total || Date.now() - last > 30_000) { last = Date.now(); console.error(`  ${done}/${total} acts`); }
+    });
+  } catch (e) {
+    // Keep what was fetched, marked partial, so the failure can be replayed without refetching.
+    if (rec.size) { rec.save(a.out, new Date(), String((e as Error)?.message ?? e)); console.error(`partial recording (${rec.size} records) saved to ${a.out}`); }
+    throw e;
+  }
+  rec.save(a.out);
+  console.log(`recorded ${r.acts} acts, ${r.versions} versions (${rec.size} records) to ${a.out} in ${((Date.now() - t0) / 1000).toFixed(0)}s`);
+  for (const e of r.perActErrors) console.log(`  history-error ${e.ada}: ${e.error}`);
+  for (const m of r.missingVersions) console.log(`  missing version ${m}`);
+  if (r.perActErrors.length || r.missingVersions.length) process.exitCode = 2;
 }
 
 async function cmdLiveCheck() {
@@ -180,7 +227,7 @@ function revertName(e: unknown): string {
   return (e as Error).message.split("\n")[0];
 }
 
-const cmds: Record<string, () => Promise<void>> = { deploy: cmdDeploy, anchor: cmdAnchor, verify: cmdVerify, page: cmdPage, "live-check": cmdLiveCheck, pay: cmdPay, award: cmdAward, link: cmdLink };
+const cmds: Record<string, () => Promise<void>> = { deploy: cmdDeploy, anchor: cmdAnchor, verify: cmdVerify, page: cmdPage, "live-check": cmdLiveCheck, record: cmdRecord, pay: cmdPay, award: cmdAward, link: cmdLink };
 if (!cmd || !cmds[cmd]) { console.error(`usage: cli <${Object.keys(cmds).join("|")}> [options]`); process.exit(1); }
 /** Save what a live run fetched. Never writes an empty file (deploy, pay, ... fetch nothing), and keeps a
  *  partial recording of a failed run, marked as such, so the failure can be replayed offline. */

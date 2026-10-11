@@ -106,7 +106,10 @@ export class LiveClient implements DiavgeiaClient {
         u.searchParams.set("org", p.org);
         u.searchParams.set("type", p.type);
         u.searchParams.set("from_issue_date", from);
-        u.searchParams.set("to_issue_date", to);
+        // The API's to_issue_date excludes that day: it runs the query up to Athens midnight at the start of `to`,
+        // and issueDate is stored as UTC midnight (verified 2026-10-11: 2025-03-31..2025-03-31 returns 0 acts,
+        // 2025-03-31..2025-04-01 returns the 25 of 31 March). Ask for the day after to keep `to` inclusive.
+        u.searchParams.set("to_issue_date", iso(Date.parse(to) + DAY));
         // submissionTimestamp defaults to a 6-month window too; widen it
         u.searchParams.set("from_date", from);
         u.searchParams.set("size", String(p.size ?? 500));

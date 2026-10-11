@@ -32,7 +32,10 @@ function artifact(name: string): { abi: Abi; bytecode: Hex } {
   return { abi: j.abi as Abi, bytecode: j.bytecode.object as Hex };
 }
 
-export const publicClient = createPublicClient({ chain: foundry, transport: http(RPC) });
+// viem polls for receipts every 4s by default. Anvil mines on submission, so locally that is pure waiting
+// (4s per anchor, over 6 hours for a year of Athens). Poll fast only against a local node.
+const LOCAL_RPC = /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?\/?$/.test(RPC);
+export const publicClient = createPublicClient({ chain: foundry, transport: http(RPC), pollingInterval: LOCAL_RPC ? 50 : 4_000 });
 export const wallet = (key: Hex) =>
   createWalletClient({ chain: foundry, transport: http(RPC), account: privateKeyToAccount(key) });
 

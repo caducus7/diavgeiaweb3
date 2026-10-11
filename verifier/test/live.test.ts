@@ -6,7 +6,7 @@ import { buildReport, versionsOf, type ChainReader, type ReportParams } from "..
 import { checkAmount, parseDecision, DiavgeiaShapeError, MAX_AMOUNT } from "../src/validate.js";
 import { toCents } from "../src/canonical.js";
 import { liveCheck, queryOfFixture } from "../src/livecheck.js";
-import { RecordingClient } from "../src/record.js";
+import { RecordingClient, prefetch } from "../src/record.js";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -36,13 +36,14 @@ function mockApi(decisions: DiavgeiaDecision[], logs: Record<string, VersionLog>
     const path = decodeURIComponent(u.pathname);
     if (path.endsWith("/search.json")) {
       const q = u.searchParams;
-      const from = Date.parse(q.get("from_issue_date")!), to = Date.parse(q.get("to_issue_date")!);
-      if (o.maxWindowDays !== undefined && (to - from) / DAY + 1 > o.maxWindowDays) throw new Error(`window over ${o.maxWindowDays} days requested`);
+      // Like the real API: the to_issue_date day itself is excluded (see LiveClient.search).
+      const from = Date.parse(q.get("from_issue_date")!), toExcl = Date.parse(q.get("to_issue_date")!);
+      if (o.maxWindowDays !== undefined && (toExcl - from) / DAY > o.maxWindowDays) throw new Error(`window over ${o.maxWindowDays} days requested`);
       const latest = new Map<string, DiavgeiaDecision>();
       for (const d of decisions) {
         if (d.organizationId !== q.get("org")) continue;
         if (!o.ignoreType && d.decisionTypeId !== q.get("type")) continue;
-        if (d.issueDate < from || d.issueDate >= to + DAY) continue;
+        if (d.issueDate < from || d.issueDate >= toExcl) continue;
         const cur = latest.get(d.ada);
         if (!cur || d.correctedVersionId === cur.versionId) latest.set(d.ada, d);
       }
@@ -85,6 +86,16 @@ describe("LiveClient.search", () => {
     expect(r.length).toBe(600);
     expect(new Set(r.map((d) => d.ada)).size).toBe(600);
     expect(calls.length).toBeGreaterThan(5);
+  });
+
+  it("keeps acts issued on the last day of every window (regression: to_issue_date is exclusive in the API)", async () => {
+    const start = Date.parse("2025-01-01");
+    const acts = Array.from({ length: 365 }, (_, i) => ({ ...paints, ada: `DAY-${i}`, versionId: `day-${i}`, correctedVersionId: null, issueDate: start + i * DAY }));
+    const { f } = mockApi(acts, {});
+    const r = await live(f).search({ org: "6013", type: "Β.2.2", fromIssueDate: "2025-01-01", toIssueDate: "2025-12-31", size: 500 });
+    expect(r.length).toBe(365);
+    const one = await live(f).search({ org: "6013", type: "Β.2.2", fromIssueDate: "2025-03-31", toIssueDate: "2025-03-31" });
+    expect(one.map((d) => d.ada)).toEqual(["DAY-89"]);
   });
 
   it("refuses results when the API ignores the type filter", async () => {
@@ -249,8 +260,20 @@ describe("date ranges", () => {
 });
 
 describe("live-check", () => {
-  it("reads the query from the fixture's _source", () => {
-    expect(queryOfFixture(fx as never)).toEqual({ org: "6013", type: "Β.2.2", from: "2025-11-24", to: "2025-11-30" });
+  it("a _sample fixture expects extra live acts but still flags missing ones", async () => {
+    const extra = { ...paints, ada: "NEW-1", versionId: "new-1" };
+    const { f } = mockApi([...fx.decisions, extra], fx.versionlog);
+    const sample = { ...fx, _sample: "subset" };
+    expect((await liveCheck(live(f), sample as never, quiet)).filter((l) => !l.ok)).toEqual([]);
+    const { f: f2 } = mockApi(fx.decisions.filter((d) => d.ada !== "ΨΨ9ΣΩ6Μ-1ΕΦ"), fx.versionlog);
+    const bad = (await liveCheck(live(f2), sample as never, quiet)).filter((l) => !l.ok);
+    expect(bad[0].detail).toMatch(/missing live: ΨΨ9ΣΩ6Μ-1ΕΦ/);
+  });
+
+  it("reads a hand-made _source URL as the API ran it (to_issue_date exclusive), and prefers _query", () => {
+    expect(queryOfFixture(fx as never)).toEqual({ org: "6013", type: "Β.2.2", from: "2025-11-24", to: "2025-11-29" });
+    expect(queryOfFixture({ ...fx, _query: { org: "1", type: "T", from: "2025-01-01", to: "2025-01-31" } } as never))
+      .toEqual({ org: "1", type: "T", from: "2025-01-01", to: "2025-01-31" });
   });
 
   it("all ok when the API returns what the fixture holds", async () => {
@@ -264,7 +287,8 @@ describe("live-check", () => {
     const drifted = fx.decisions.map((d, i) => (i === 2 ? { ...d, subject: d.subject + " " } : d));
     const extra = { ...paints, ada: "NEW-1", versionId: "new-1" };
     const { f } = mockApi([...drifted, extra], fx.versionlog);
-    const bad = (await liveCheck(live(f), fx as never, quiet)).filter((l) => !l.ok);
+    const whole = { ...fx, _sample: undefined };
+    const bad = (await liveCheck(live(f), whole as never, quiet)).filter((l) => !l.ok);
     expect(bad.map((l) => l.what.split(" ")[0])).toEqual(["search", fx.decisions[2].ada]);
     expect(bad[0].detail).toMatch(/not in fixture: NEW-1/);
   });
@@ -417,5 +441,46 @@ describe("second review fixes", () => {
     expect(saved._partial).toBe(true);
     expect(saved._failure).toBe("boom");
     expect(() => new FixtureClient(path)).not.toThrow();
+  });
+});
+
+describe("prefetch", () => {
+  it("fetches every history with bounded concurrency and replays to the same report", async () => {
+    let inFlight = 0, peak = 0;
+    const { f: base } = mockApi(fx.decisions, fx.versionlog);
+    const f = (async (u: URL) => { inFlight++; peak = Math.max(peak, inFlight); await new Promise((r) => setTimeout(r, 5)); try { return await base(u); } finally { inFlight--; } }) as unknown as typeof fetch;
+    const rec = new RecordingClient(live(f), "https://diavgeia.gov.gr/opendata");
+    const r = await prefetch(rec, { org: "6013", type: "Β.2.2", fromIssueDate: "2025-11-24", toIssueDate: "2025-11-30" }, 2);
+    expect(r).toEqual({ acts: 4, versions: 5, perActErrors: [], missingVersions: [] });
+    expect(peak).toBeLessThanOrEqual(2);
+    const path = join(mkdtempSync(join(tmpdir(), "dv-pre-")), "p.json");
+    rec.save(path);
+    const chain: ChainReader = { versions: async () => [], anchoredAdas: async () => [] };
+    expect(await buildReport(new FixtureClient(path), chain, P)).toEqual(await buildReport(new FixtureClient(FIXTURE), chain, P));
+  });
+
+  it("reports a version it could not retrieve instead of silently recording without it", async () => {
+    const { f } = mockApi(fx.decisions.filter((d) => d.versionId !== "303d2b3a-90a2-4a17-a6b2-79421af7095e"), fx.versionlog);
+    const r = await prefetch(new RecordingClient(live(f), "x"), { org: "6013", type: "Β.2.2", fromIssueDate: "2025-11-24", toIssueDate: "2025-11-30" });
+    expect(r.missingVersions).toHaveLength(1);
+    expect(r.missingVersions[0]).toMatch(/303d2b3a/);
+  });
+
+  it("records the URL as sent (to + 1 day) and the inclusive query separately", async () => {
+    const { f } = mockApi(fx.decisions, fx.versionlog);
+    const rec = new RecordingClient(live(f), "https://diavgeia.gov.gr/opendata");
+    await rec.search({ org: "6013", type: "Β.2.2", fromIssueDate: "2025-11-24", toIssueDate: "2025-11-30" });
+    const path = join(mkdtempSync(join(tmpdir(), "dv-q-")), "q.json");
+    rec.save(path);
+    const saved = JSON.parse(readFileSync(path, "utf8"));
+    expect(saved._source).toMatch(/to_issue_date=2025-12-01$/);
+    expect(saved._query.to).toBe("2025-11-30");
+  });
+
+  it("collects per-act errors instead of stopping", async () => {
+    const { f } = mockApi(fx.decisions, { "ΨΟΣΝΩ6Μ-Θ6Ε": { ...fx.versionlog["ΨΟΣΝΩ6Μ-Θ6Ε"], versions: [{ ...fx.versionlog["ΨΟΣΝΩ6Μ-Θ6Ε"].versions[0], versionId: "ghost" }] } });
+    const r = await prefetch(new RecordingClient(live(f), "x"), { org: "6013", type: "Β.2.2", fromIssueDate: "2025-11-24", toIssueDate: "2025-11-30" });
+    expect(r.acts).toBe(4);
+    expect(r.perActErrors.map((e) => e.ada)).toEqual(["ΨΟΣΝΩ6Μ-Θ6Ε"]);
   });
 });

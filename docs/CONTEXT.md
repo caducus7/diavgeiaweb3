@@ -40,9 +40,29 @@ a crypto audience.
   payment acts. The single highest-value change in the whole plan is a Diavgeia schema change, not a contract.
 - The void prefix is unstructured text. `isVoid` is a regex and will have false negatives.
 
+## Findings from the first live run (Athens 2025, Β.2.2, recorded 2026-10-11)
+
+- 5,515 acts, 5,667 versions. Monthly `info.total` sums agree exactly, and two recordings taken minutes apart
+  hold the identical 5,667 versions. Older figures (5,472 here, 5,482 at
+  diafaneia.ai) were taken earlier or with clamped windows. Portal non-void total 236,634,270.09 EUR.
+- `live-check`: all five fixture records hash identically live, including the reconstructed pre-void
+  version, so the reconstruction was right and canonical form v1 is stable against live data.
+- Two client bugs would have corrupted the year silently: the shared paging counter (kept 3,060 of 5,515)
+  and the API's exclusive `to_issue_date` (SPEC §7). Both fixed with regression tests.
+- **1,578 of the 5,480 non-void acts (29%) carry no amount** (payroll orders among them). Both totals are blind to them,
+  so the headline number covers payments that state an amount, and the page says so.
+- 61Θ6Ω6Μ-2ΑΗ, 1,397,928.53 EUR, 5th payment for the new Panathinaikos stadium: payer and payee are swapped
+  (payer is the TERNA, AKTOR and METKA consortium, payee is the municipality). The registry cannot anchor it
+  under Athens' key, so it is the whole of the 2025 difference. A data-quality finding at source.
+- 63ΓΕΩ6Μ-ΧΟ1: v3 of 4 is an empty correction (no payer, payee or amount) between two valid versions. The
+  registry refuses v3, so v4 is blocked behind it.
+- 6Γ5ΛΩ6Μ-ΔΒΡ (April 2025 payroll): voided in v2, un-voided in v3. The registry accepts nothing after a void,
+  so the chain keeps it voided while the portal shows it live. 1 of 35 voided acts. Open question below.
+- No multi-payee and no non-EUR acts in 2025. The multi-payee question is not urgent for Athens Β.2.2.
+
 ## What runs today
 
-- 20 Foundry tests, 66 vitest tests, all green.
+- 20 Foundry tests, 79 vitest tests, all green.
 - `deploy / anchor / verify / pay / award / link` against Anvil with fixtures: five real versions across four
   ADAs anchor; verify shows portal = chain = 624,252.09 EUR; tampering one amount by 36 cents is caught with
   exit 2; paying the voided act is refused with `ActVoided()`; linking the paints act against a 20,000 EUR
@@ -50,10 +70,7 @@ a crypto audience.
 - `page` renders the same reconciliation as a static HTML page (next step 2, fixture only so far). `verify`
   now also catches an anchored act that the portal stops returning (`portal-missing`, found from `Anchored`
   logs) and no longer reports a chain that merely lags the portal as `mismatch` (`chain-behind`).
-- The live client is hardened but has still never run (sandbox DNS does not resolve diavgeia.gov.gr). It is
-  tested against a mock API built from the fixture. A review found that its paging counter was shared across
-  the 180-day windows: a full-year run would have kept only the first page of the second window (about 2,440
-  of Athens' 2,940 Jul to Dec acts) with no error. Fixed, with a regression test. SPEC §8 lists the checks.
+- The live client has run the whole of Athens 2025 (above). SPEC §8 lists its checks.
 - Fixtures were fetched by hand. Record 4 in the fixture (pre-void version) is reconstructed from a field dump, not verbatim.
 
 ## Open questions, in blocking order
@@ -69,14 +86,18 @@ a crypto audience.
       Merkle root of payees or to emit one anchor per payee.
 - [ ] Who at the Ministry of Digital Governance owns the Β.2.2 field list, and what making KAE and CPV
       mandatory would take.
-- [ ] Version log `status`: only `PUBLISHED` has been seen. A newer entry with another status (pending,
-      revoked) currently makes that act a `history-error` rather than being filtered, on purpose: filtering
-      on unseen values would be a guess. Decide once live data shows what statuses exist.
+- [ ] Un-voiding: the registry treats a void as final (`AlreadyVoided`), but the portal un-voided one 2025
+      act. Keep the rule (the chain then disagrees with the portal for that act, visibly), or allow a version
+      after a void? Changes the contract and SPEC §5.
+- [ ] Payer field: the anchor's `payerVat` comes from the free-entered `extraFieldValues.org.afm`, which is
+      wrong or empty on two 2025 acts. Diavgeia's `organizationId` is authoritative. Should the signer's
+      authority be checked against the org rather than the typed VAT? Changes the anchor semantics.
+- [x] Version log `status`: only `PUBLISHED` in all of Athens 2025. Unknown statuses stay a `history-error`.
 - [ ] Whether diafaneia.ai's team wants a verifier. A diff that is never zero is their problem first.
 
 ## Next steps
 
-1. From a machine with network, in this order:
+1. Done for Athens 2025 on 2026-10-11 (findings above). To repeat for another org or year, in this order:
    a. `npx tsx src/cli.ts live-check`: must print no `DIFF`. A verbatim record that differs means the fixture
       or the canonical form is wrong; stop there. A difference on the reconstructed record means the
       reconstruction was wrong: replace it with the live record.

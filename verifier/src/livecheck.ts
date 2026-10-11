@@ -15,17 +15,22 @@ import { isPerActError } from "./validate.js";
 export interface CheckLine { what: string; ok: boolean; detail: string }
 
 export interface FixtureFile {
+  _query?: { org: string; type: string; from: string; to: string };
   _source?: string;
+  /** Set when the fixture holds a hand-picked subset of its query: extra live acts are then expected. */
+  _sample?: string;
   decisions: Array<DiavgeiaDecision & { _reconstructed?: boolean }>;
 }
 
-/** org, type and window from the fixture's `_source` search URL. */
+/** org, type and inclusive window of the query a fixture was built from. `_query` (written by `record`) is
+ *  inclusive; a hand-made `_source` URL is read as the API ran it, with `to_issue_date` exclusive. */
 export function queryOfFixture(fx: FixtureFile): { org: string; type: string; from: string; to: string } {
-  if (!fx._source) throw new Error("fixture has no _source search URL");
+  if (fx._query) return fx._query;
+  if (!fx._source) throw new Error("fixture has neither _query nor a _source search URL");
   const q = new URL(fx._source).searchParams;
-  const org = q.get("org"), type = q.get("type"), from = q.get("from_issue_date"), to = q.get("to_issue_date");
-  if (!org || !type || !from || !to) throw new Error(`fixture _source lacks org/type/from_issue_date/to_issue_date: ${fx._source}`);
-  return { org, type, from, to };
+  const org = q.get("org"), type = q.get("type"), from = q.get("from_issue_date"), toExcl = q.get("to_issue_date");
+  if (!org || !type || !from || !toExcl) throw new Error(`fixture _source lacks org/type/from_issue_date/to_issue_date: ${fx._source}`);
+  return { org, type, from, to: new Date(Date.parse(toExcl) - 86_400_000).toISOString().slice(0, 10) };
 }
 
 export async function liveCheck(client: DiavgeiaClient, fx: FixtureFile, warn = console.warn): Promise<CheckLine[]> {
@@ -38,10 +43,14 @@ export async function liveCheck(client: DiavgeiaClient, fx: FixtureFile, warn = 
   const liveAdas = new Set(live.map((d) => d.ada));
   const missing = [...fxAdas].filter((a) => !liveAdas.has(a));
   const extra = [...liveAdas].filter((a) => !fxAdas.has(a));
+  // Acts missing live are always a difference. Extra live acts are one only if the fixture claims to be the
+  // whole query; for a sample they are expected and only counted.
+  const extraIsDiff = extra.length > 0 && !fx._sample;
   lines.push({
     what: `search ${q.org} ${q.type} ${q.from}..${q.to}`,
-    ok: missing.length === 0 && extra.length === 0,
-    detail: `${live.length} acts live, ${fxAdas.size} in fixture` + (missing.length ? `; missing live: ${missing.join(", ")}` : "") + (extra.length ? `; not in fixture: ${extra.join(", ")}` : ""),
+    ok: missing.length === 0 && !extraIsDiff,
+    detail: `${live.length} acts live, ${fxAdas.size} in fixture` + (missing.length ? `; missing live: ${missing.join(", ")}` : "")
+      + (extraIsDiff ? `; not in fixture: ${extra.join(", ")}` : extra.length ? `; ${extra.length} not in fixture (sample, expected)` : ""),
   });
 
   // The live latest version of each act must be one the fixture holds; otherwise the portal has moved on

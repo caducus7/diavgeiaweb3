@@ -23,7 +23,7 @@ verifier/             TypeScript (viem, tsx, vitest)
   src/page.ts                static per-municipality HTML page
   src/validate.ts            shape checks on every API record (SPEC §8)
   src/livecheck.ts           fixture vs live API, hash by hash
-  src/record.ts              save a live run in the fixture format
+  src/record.ts              record: fetch a window once, save in the fixture format
   src/cli.ts                 deploy | anchor | verify | page | live-check | pay | award | link
   fixtures/athens-2025-11.json   5 real records (4 verbatim, 1 reconstructed earlier version)
 ```
@@ -34,7 +34,7 @@ Needs Foundry (forge, anvil) and Node 22.
 
 ```sh
 cd contracts && forge test                      # 20 passed
-cd ../verifier && npm install && npm test       # 66 passed
+cd ../verifier && npm install && npm test       # 79 passed
 
 anvil &                                         # local chain, default accounts
 export DIAVGEIA_FIXTURE=fixtures/athens-2025-11.json   # omit to hit the live API
@@ -43,9 +43,10 @@ npx tsx src/cli.ts anchor      # 5 versions across 4 ADAs, incl. the void chain 
 npx tsx src/cli.ts verify      # per-ADA status + portal total vs chain total; exit 2 on any disagreement
 npx tsx src/cli.ts page        # same, as out/6013-2025-11-24-2025-11-30.html
 
-# with network, no DIAVGEIA_FIXTURE:
+# with network, no DIAVGEIA_FIXTURE (in a proxied sandbox add NODE_USE_ENV_PROXY=1):
 npx tsx src/cli.ts live-check                     # fixture vs live API, hash by hash; exit 2 on any DIFF
-DIAVGEIA_RECORD=run.json npx tsx src/cli.ts verify # also save every record fetched, as a fixture
+npx tsx src/cli.ts record --from 2025-01-01 --to 2025-12-31 --out out/athens-2025.json   # fetch once, ~4 min
+DIAVGEIA_FIXTURE=out/athens-2025.json npx tsx src/cli.ts anchor --from 2025-01-01 --to 2025-12-31  # then verify, page
 
 npx tsx src/cli.ts pay --ada ΨΟΣΝΩ6Μ-Θ6Ε        # refused: ActVoided()
 npx tsx src/cli.ts pay --ada 9ΓΒΝΩ6Μ-Λ4Η        # released 25,462.16 EUR
@@ -81,7 +82,7 @@ the spec changed and every existing anchor is invalid; bump `CANONICAL_VERSION`.
 
 - Signer keys are Anvil accounts mapped to one org VAT. Real key issuance and revocation is section 7 of the plan.
 - `MockRail` records a settlement; it does not move euros.
-- The live client is untested against the API from this environment (egress blocked); fixtures are real
-  records fetched by hand on 2026-10-11.
+- The live client has run the whole of Athens 2025 (CONTEXT.md, first live run). The year's recording is
+  not committed: 11.7 MB, and it holds payee names of natural persons.
 - No GDPR position on VAT numbers of natural persons on a public ledger. Names are kept off-chain; VAT
   numbers are not. That is the open question before any public deployment.
