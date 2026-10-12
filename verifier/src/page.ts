@@ -25,7 +25,6 @@ const LABEL: Record<Status, string> = {
   ok: "matches",
   void: "voided, history kept",
   unanchored: "not anchored",
-  unanchorable: "payer is not this org",
   "chain-behind": "newer version not anchored",
   mismatch: "portal differs from anchor",
   "chain-ahead": "portal lost a version",
@@ -33,7 +32,7 @@ const LABEL: Record<Status, string> = {
   "history-error": "portal contradicts itself",
 };
 
-const ORDER: Status[] = ["mismatch", "chain-ahead", "portal-missing", "history-error", "unanchorable", "chain-behind", "unanchored", "void", "ok"];
+const ORDER: Status[] = ["mismatch", "chain-ahead", "portal-missing", "history-error", "chain-behind", "unanchored", "void", "ok"];
 
 const cents = (c: bigint | null) => (c === null ? "&ndash;" : esc(formatEur(c)));
 
@@ -49,6 +48,7 @@ export function renderPage(r: Report, m: PageMeta): string {
     `<tr><td>${esc(s.id)}</td><td class="n">${s.acts}</td><td>${s.orgSignRights === null ? "unknown" : s.orgSignRights ? "yes" : "no"}</td></tr>`).join("\n");
   const issueRows = r.signerIssues.map((i) =>
     `<tr><td>${esc(i.ada)}</td><td>${esc(i.signerId)}</td><td>${esc(i.issue)}</td></tr>`).join("\n");
+  const otherPayerRows = r.payerNotes.other.map((o) => `<tr><td><a href="https://diavgeia.gov.gr/decision/view/${encodeURIComponent(o.ada)}">${esc(o.ada)}</a></td></tr>`).join("\n");
   const noRights = r.signers.filter((s) => s.orgSignRights === false).reduce((n, s) => n + s.acts, 0);
   const counts = ORDER.filter((s) => r.counts[s]).map((s) => `${esc(LABEL[s])}: ${r.counts[s]}`).join(" &middot; ");
 
@@ -61,6 +61,7 @@ export function renderPage(r: Report, m: PageMeta): string {
     r.nonEur ? `<strong>${r.nonEur} act(s) carry a non-EUR amount and are summed as if EUR.</strong>` : "",
     r.noAmount ? `${r.noAmount} act(s) carry no amount at all (payroll orders, for one) and are invisible in both totals.` : "",
     "Voided acts are excluded from both totals. Voiding is detected from the subject text (Diavgeia has no void flag), so a void can be missed.",
+    `Every anchor carries this organisation's VAT (${p.vatFromRegistry ? "from Diavgeia's organisation record" : "given by the operator: this data source has no organisation record"}), not the payer typed into the act, which is often empty or wrong. The typed payer is still part of the anchored hash, so it cannot change unnoticed either.`,
     "Anchors are written by a civic crawler key, not by the municipality. This page shows that the portal has not changed since anchoring; it does not show the portal was right to begin with.",
   ].filter(Boolean).map((c) => `<li>${c}</li>`).join("\n");
 
@@ -83,7 +84,7 @@ h1 { font-size:1.4rem; margin:0 0 4px; } .sub { color:var(--mute); margin:0 0 24
 .scroll { overflow-x:auto; } table { border-collapse:collapse; width:100%; font-size:.9rem; }
 th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; } td.n { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
 tr.s-mismatch td:nth-child(2), tr.s-chain-ahead td:nth-child(2), tr.s-portal-missing td:nth-child(2), tr.s-history-error td:nth-child(2) { color:var(--bad); font-weight:600; }
-tr.s-chain-behind td:nth-child(2), tr.s-unanchored td:nth-child(2), tr.s-unanchorable td:nth-child(2) { color:var(--warn); }
+tr.s-chain-behind td:nth-child(2), tr.s-unanchored td:nth-child(2) { color:var(--warn); }
 a { color:inherit; } ul { color:var(--mute); padding-left:20px; } footer { color:var(--mute); font-size:.8rem; margin-top:24px; word-break:break-all; }
 </style>
 </head>
@@ -121,6 +122,16 @@ ${r.signerIssues.length ? `<div class="scroll"><table>
 <thead><tr><th>ADA</th><th>Signer id</th><th>Issue</th></tr></thead>
 <tbody>
 ${issueRows}
+</tbody>
+</table></div>` : ""}
+<h2>What the acts type as payer</h2>
+<p>${r.payerNotes.empty || r.payerNotes.other.length
+    ? `${r.payerNotes.empty} act(s) leave the payer field empty${r.payerNotes.other.length ? ` and ${r.payerNotes.other.length} name a payer other than this organisation (listed below; the portal shows whom)` : ""}. A data-quality note at source, not a disagreement: these acts are anchored under this organisation like any other.`
+    : "Every act names this organisation as payer."}</p>
+${r.payerNotes.other.length ? `<div class="scroll"><table>
+<thead><tr><th>ADA with another payer typed</th></tr></thead>
+<tbody>
+${otherPayerRows}
 </tbody>
 </table></div>` : ""}
 <h2>Read this before quoting the number</h2>

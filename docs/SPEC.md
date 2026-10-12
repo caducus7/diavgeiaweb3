@@ -66,7 +66,8 @@ v1 only.
 ```
 bytes32 actHash      keccak256 of canonical form
 bytes8  actType      see 3
-uint64  payerVat     numeric AFM, leading zeros dropped (090025537 -> 90025537)
+uint64  payerVat     the publishing organisation's VAT (`vatNumber` of /organizations/{uid}), numeric,
+                     leading zeros dropped (090025537 -> 90025537). Not the typed payer: see below
 uint64  payeeVat     first sponsor's AFM, 0 if none
 uint128 amountCents  first sponsor's amount in cents, 0 if none
 uint32  issueDate    unix day
@@ -76,6 +77,13 @@ address signer       set by the contract from msg.sender
 uint64  anchoredAt   set by the contract from block.timestamp
 bool    voided       true if this version voids the act
 ```
+
+`payerVat` is the organisation that published the act, so the registry's signer check reads "this
+organisation's key anchored this organisation's act". The payer typed into the act (`extraFieldValues.org.afm`)
+is empty on most acts of some bodies (Amorgos 2025: 647 of 681 versions) and wrong on a few (Athens 2025: one
+act with payer and payee swapped). It stays in `actHash` (§2), so it cannot change unnoticed, and `verify`
+reports it as a data-quality note (§6). Before 2026-10-12 `payerVat` was the typed payer and acts without the
+org's typed VAT could not be anchored; no anchors from that rule exist outside throwaway Anvil chains.
 
 Known limitation: acts with more than one sponsor commit to all of them in `actHash` but expose only the
 first on-chain. PaymentGate therefore handles single-payee acts only. Multi-payee support is an open item.
@@ -123,18 +131,19 @@ for units below their own (Athens 2025: 1,056 acts). `verify` and `page` list si
 and whether they hold organisation-level signing rights; names are not shown.
 
 `anchor`: for each ADA in the search window, walk `/versionlog.json`, fetch earlier versions via
-`/decisions/v/{id}.json`, anchor any versions the chain lacks, in order, chaining `prevAnchor`.
+`/decisions/v/{id}.json`, anchor any versions the chain lacks, in order, chaining `prevAnchor`, each with the
+organisation's VAT as `payerVat` (§4). Every earlier version must carry the latest version's `organizationId`;
+otherwise the act is a `history-error`, since its anchor would claim another organisation's act.
 
 `verify`: for each ADA the portal returns, compare chain versions against portal versions by hash,
 position by position. Statuses:
 `ok`, `void` (latest version voids; earlier versions still on chain), `unanchored`, `mismatch` (a version
 both sides hold differs), `chain-ahead` (chain has versions the portal no longer shows), `chain-behind`
 (chain holds a matching prefix of the portal's versions; the detail says whether the rest are merely not yet
-anchored or blocked: after a void, or behind a version whose payer is not the org), `unanchorable` (nothing
-anchored and the act's payer VAT is not the org's, so the org's signer cannot anchor it), `history-error`
+anchored or blocked after a void), `history-error`
 (the portal contradicts itself about this act's history: the version log does not end with the version search
-returned, a version record is for a different version, or the log or an earlier version fails the shape
-checks of §8). A search record that fails §8 is not scoped to its act: it aborts the run, because the totals
+returned, a version record is for a different version or another organisation, or the log or an earlier
+version fails the shape checks of §8). A search record that fails §8 is not scoped to its act: it aborts the run, because the totals
 cannot be computed honestly without it.
 Then, for every ADA in the registry's `Anchored` logs whose latest anchor has the org's `payerVat` and an
 `issueDate` inside the window but which the portal did not return: `portal-missing`. Its amount counts in
@@ -142,16 +151,20 @@ the chain total.
 Prints portal and chain non-void totals and their difference. Exit 2 if any `mismatch`, `chain-ahead`,
 `portal-missing` or `history-error` (also with `--json`). A `history-error` is scoped to its act: the run
 carries on. A network or HTTP failure aborts the run (exit 1) rather than producing partial totals.
-`--vat` is checked against the acts: it is an error only when fewer than half carry it (a wrong `--vat`);
-single acts with another payer are `unanchorable` findings. `chain-behind` and `unanchored` are lag, not disagreement.
+`chain-behind` and `unanchored` are lag, not disagreement.
+Payer notes (reported, never a gate): how many latest versions leave the typed payer empty, and which name a
+VAT other than the organisation's. `verify` prints those VATs; `page` lists the ADAs only.
+A `--vat` given in place of the organisation record is the VAT every anchor carries and the key is registered
+for, so `anchor`, `verify` and `page` check it against the acts that type a payer: with 3 or more, at least
+half must carry it; with 1 or 2, at least one. With none it cannot be checked and the run is refused.
 
 `page`: the same reconciliation rendered as one static HTML file (no scripts, no external requests). It
 shows ADAs, statuses and amounts only; subjects and payee names are left out. It states its data source
 (live or fixture) and the caveats on the totals. Same exit code as `verify`.
 
 `anchor` skips an act whose history is a `history-error` (exit 2). It checks each version before sending it,
-with the same rule the report uses (`anchorBlocker`): a version whose payer is not the signer's org, or any
-version after a void, is not sent, and neither is anything after it; earlier versions of that act are still
+with the same rule the report uses (`anchorBlocker`): any version after a void is not sent, and neither is
+anything after it; earlier versions of that act are still
 anchored. These registry refusals are logged and exit 0, since they are permanent facts about the data that
 `verify` reports. Any other revert is logged per act; an RPC failure aborts.
 

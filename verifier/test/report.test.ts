@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { actHash, isVoid, toCents, unixDay, vatToUint, adaKey, type DiavgeiaDecision } from "../src/canonical.js";
 import { FixtureClient } from "../src/diavgeia.js";
-import { buildReport, formatEur, versionsOf, type ChainReader, type ChainVersion, type ReportParams } from "../src/report.js";
+import { buildReport, checkFallbackVat, formatEur, versionsOf, type ChainReader, type ChainVersion, type ReportParams } from "../src/report.js";
 import { renderPage } from "../src/page.js";
-import { adaFromKey } from "../src/chain.js";
+import { adaFromKey, toAnchor, ZERO32 } from "../src/chain.js";
 
 const FIXTURE = new URL("../fixtures/athens-2025-11.json", import.meta.url).pathname;
 const fx = JSON.parse(readFileSync(FIXTURE, "utf8"));
@@ -15,7 +15,7 @@ const quiet = () => {};
 
 const anchorOf = (d: DiavgeiaDecision): ChainVersion => ({
   actHash: actHash(d),
-  payerVat: vatToUint(d.extraFieldValues?.org?.afm ?? ""),
+  payerVat: vatToUint(P.orgVat), // as `anchor` writes it: the org's VAT, whatever the act types
   amountCents: toCents(d.extraFieldValues?.sponsor?.[0]?.expenseAmount?.amount),
   issueDate: unixDay(d.issueDate),
   voided: isVoid(d.subject),
@@ -34,6 +34,16 @@ const reader = (m: Map<string, ChainVersion[]>): ChainReader => ({
   versions: async (ada) => m.get(ada) ?? [],
   anchoredAdas: async () => [...m.keys()],
 });
+
+/** 61Θ6Ω6Μ-2ΑΗ as Athens published it: payer and payee swapped. */
+function swappedAct(template: DiavgeiaDecision): DiavgeiaDecision {
+  const s = JSON.parse(JSON.stringify(template));
+  s.ada = "61Θ6Ω6Μ-2ΑΗ"; s.versionId = "swapped-1";
+  s.extraFieldValues.org = { afm: "996607880", name: "ΚΟΙΝΟΠΡΑΞΙΑ" };
+  s.extraFieldValues.sponsor[0].sponsorAFMName.afm = "090025537";
+  s.extraFieldValues.sponsor[0].expenseAmount.amount = 1397928.53;
+  return s;
+}
 
 /** Write a modified copy of the fixture and return a client over it. */
 function clientWith(edit: (f: typeof fx) => void): FixtureClient {
@@ -115,25 +125,17 @@ describe("buildReport", () => {
     await expect(buildReport(new FixtureClient(FIXTURE), reader(new Map()), { ...P, orgVat: "1" })).rejects.toThrow(/pass --vat/);
   });
 
-  it("an act whose payer is not the org (Athens 2025: payer and payee swapped) is unanchorable, not a run-wide error", async () => {
-    const c = clientWith((f) => {
-      const swapped = JSON.parse(JSON.stringify(f.decisions[0]));
-      swapped.ada = "61Θ6Ω6Μ-2ΑΗ"; swapped.versionId = "swapped-1";
-      swapped.extraFieldValues.org = { afm: "996607880", name: "ΚΟΙΝΟΠΡΑΞΙΑ" };
-      swapped.extraFieldValues.sponsor[0].sponsorAFMName.afm = "090025537";
-      swapped.extraFieldValues.sponsor[0].expenseAmount.amount = 1397928.53;
-      f.decisions.push(swapped);
-    });
-    const chain = await fullyAnchored(new FixtureClient(FIXTURE));
-    const r = await buildReport(c, reader(chain), P);
-    const f = r.findings.find((x) => x.ada === "61Θ6Ω6Μ-2ΑΗ")!;
-    expect(f.status).toBe("unanchorable");
-    expect(f.detail).toMatch(/payer VAT 996607880/);
-    expect(r.difference).toBe(139792853n); // portal counts it, the chain cannot hold it
+  it("an act whose typed payer is not the org (Athens 2025: payer and payee swapped) is anchored under the org's VAT and noted", async () => {
+    const c = clientWith((f) => { f.decisions.push(swappedAct(f.decisions[0])); });
+    const r = await buildReport(c, reader(await fullyAnchored(c)), P);
+    expect(r.findings.find((x) => x.ada === "61Θ6Ω6Μ-2ΑΗ")!.status).toBe("ok");
+    expect(r.difference).toBe(0n);
+    expect(r.payerNotes).toEqual({ empty: 0, other: [{ ada: "61Θ6Ω6Μ-2ΑΗ", typedVat: "996607880" }] });
+    expect(r.orgName).toBe("ΔΗΜΟΣ ΑΘΗΝΑΙΩΝ"); // from the organisation record, not the typed payer name
     expect(r.alarm).toBe(false);
   });
 
-  it("an act with no payer at all is unanchorable", async () => {
+  it("an act with no payer at all is anchored and counted as an empty payer", async () => {
     const c = clientWith((f) => {
       const empty = JSON.parse(JSON.stringify(f.decisions[0]));
       empty.ada = "63ΓΕΩ6Μ-ΧΟ1"; empty.versionId = "empty-1";
@@ -141,8 +143,9 @@ describe("buildReport", () => {
       empty.extraFieldValues.sponsor = [{ expenseAmount: { currency: "EUR" } }];
       f.decisions.push(empty);
     });
-    const r = await buildReport(c, reader(await fullyAnchored(new FixtureClient(FIXTURE))), P);
-    expect(r.findings.find((x) => x.ada === "63ΓΕΩ6Μ-ΧΟ1")!.detail).toMatch(/^v1: payer VAT \(none\)/);
+    const r = await buildReport(c, reader(await fullyAnchored(c)), P);
+    expect(r.findings.find((x) => x.ada === "63ΓΕΩ6Μ-ΧΟ1")!.status).toBe("ok");
+    expect(r.payerNotes.empty).toBe(1);
   });
 
   it("un-voided after a void (Athens 2025 payroll): chain-behind, explained, not an alarm", async () => {
@@ -163,7 +166,7 @@ describe("buildReport", () => {
     expect(r.alarm).toBe(false);
   });
 
-  it("a correction that drops the payer blocks every later version, and the detail says so (Athens 2025 HIV centre act)", async () => {
+  it("a correction that drops the payer is not blocked: the chain is merely behind (Athens 2025 HIV centre act)", async () => {
     const chain = await fullyAnchored(new FixtureClient(FIXTURE));
     const c = clientWith((f) => {
       const v1 = f.decisions[0];
@@ -174,11 +177,21 @@ describe("buildReport", () => {
         { versionId: v1.versionId, versionTimestamp: 1, correctedVersionId: null, status: "PUBLISHED" },
         { versionId: "nopayer-2", versionTimestamp: 2, correctedVersionId: v1.versionId, status: "PUBLISHED" }] };
     });
-    const r = await buildReport(c, reader(chain), P).catch((e) => e);
-    // The latest version has no payer, so 1 of 4 acts disagrees with --vat: still a per-act finding
-    const f = r.findings.find((x: { ada: string }) => x.ada === "9ΓΒΝΩ6Μ-Λ4Η");
+    const r = await buildReport(c, reader(chain), P);
+    const f = r.findings.find((x) => x.ada === "9ΓΒΝΩ6Μ-Λ4Η")!;
     expect(f.status).toBe("chain-behind");
-    expect(f.detail).toMatch(/v2 is blocked \(payer VAT \(none\) is not the org's/);
+    expect(f.detail).toMatch(/the rest are not anchored yet/);
+  });
+
+  it("an earlier version of another organisation is a history-error, since the anchor would claim it for this org", async () => {
+    const c = clientWith((f) => {
+      for (const d of f.decisions) if (d.versionId !== "87e590cb-ac02-421b-97e3-3386b2d16fd6" && d.ada === "ΨΟΣΝΩ6Μ-Θ6Ε") d.organizationId = "6027";
+    });
+    const r = await buildReport(c, reader(new Map()), P);
+    const f = r.findings.find((x) => x.ada === "ΨΟΣΝΩ6Μ-Θ6Ε")!;
+    expect(f.status).toBe("history-error");
+    expect(f.detail).toMatch(/belongs to org 6027, the act to org 6013/);
+    expect(r.alarm).toBe(true);
   });
 
   it("counts non-void acts with no amount, which neither total can see", async () => {
@@ -190,34 +203,22 @@ describe("buildReport", () => {
     expect(r.noAmount).toBe(1);
   });
 
-  it("an act anchorable at v1 is unanchored, not unanchorable, even if its latest version has no payer", async () => {
-    const c = clientWith((f) => {
-      const v1 = f.decisions[0];
-      const v2 = { ...JSON.parse(JSON.stringify(v1)), versionId: "nopayer-2", correctedVersionId: v1.versionId };
-      v2.extraFieldValues.org = { enterName: false };
-      f.decisions.push(v2);
-      f.versionlog[v1.ada] = { ada: v1.ada, versions: [
-        { versionId: v1.versionId, versionTimestamp: 1, correctedVersionId: null, status: "PUBLISHED" },
-        { versionId: "nopayer-2", versionTimestamp: 2, correctedVersionId: v1.versionId, status: "PUBLISHED" }] };
-    });
-    const r = await buildReport(c, reader(new Map()), P);
-    expect(r.findings.find((x) => x.ada === "9ΓΒΝΩ6Μ-Λ4Η")!.status).toBe("unanchored");
-  });
-
-  it("with the VAT from Diavgeia's organisation record, many acts without a payer are findings, not a --vat error (Amorgos 2025)", async () => {
+  it("with the VAT from Diavgeia's organisation record, acts without a typed payer are notes; a fallback --vat cannot be checked against them (Amorgos 2025)", async () => {
     const c = clientWith((f) => { for (const d of f.decisions) d.extraFieldValues.org = null; });
-    await expect(buildReport(c, reader(new Map()), P)).rejects.toThrow(/pass --vat/);
+    await expect(buildReport(c, reader(new Map()), P)).rejects.toThrow(/cannot be checked/);
     const r = await buildReport(c, reader(new Map()), { ...P, vatFromRegistry: true });
-    expect(r.counts).toEqual({ unanchorable: 4 });
+    expect(r.counts).toEqual({ unanchored: 4 });
+    expect(r.payerNotes).toEqual({ empty: 4, other: [] });
   });
 
-  it("a one-act window whose act has another payer is a finding, not a --vat error", async () => {
+  it("a fallback --vat must agree with at least one typed payer in a small window", async () => {
     const c = clientWith((f) => {
       f.decisions = [f.decisions[0]];
       f.decisions[0].extraFieldValues.org = { afm: "996607880", name: "ΚΟΙΝΟΠΡΑΞΙΑ" };
     });
-    const r = await buildReport(c, reader(new Map()), P);
-    expect(r.counts).toEqual({ unanchorable: 1 });
+    await expect(buildReport(c, reader(new Map()), P)).rejects.toThrow(/only 0 of 1/);
+    const r = await buildReport(c, reader(new Map()), { ...P, vatFromRegistry: true });
+    expect(r.counts).toEqual({ unanchored: 1 });
   });
 
   it("nothing anchored: every act unanchored, chain total zero, no alarm", async () => {
@@ -225,6 +226,30 @@ describe("buildReport", () => {
     expect(r.counts).toEqual({ unanchored: 4 });
     expect(r.chainTotal).toBe(0n);
     expect(r.alarm).toBe(false);
+  });
+});
+
+describe("checkFallbackVat", () => {
+  const acts = (fx.decisions as DiavgeiaDecision[]).filter((d) => d.ada !== "ΨΟΣΝΩ6Μ-Θ6Ε");
+  it("accepts a --vat most typed payers carry, even with one swapped act", () => {
+    expect(() => checkFallbackVat([...acts, swappedAct(acts[0])], "6013", "090025537")).not.toThrow();
+  });
+  it("refuses a --vat no typed payer carries", () => {
+    expect(() => checkFallbackVat(acts, "6013", "090256954")).toThrow(/only 0 of 3/);
+  });
+  it("passes an empty window: nothing will be anchored", () => {
+    expect(() => checkFallbackVat([], "6013", "1")).not.toThrow();
+  });
+});
+
+describe("toAnchor", () => {
+  it("carries the org's VAT, not the typed payer, while the hash still commits to the typed payer", () => {
+    const swapped = swappedAct(fx.decisions[0]);
+    const a = toAnchor(swapped, ZERO32, "090025537");
+    expect(a.payerVat).toBe(90025537n);
+    expect(a.payeeVat).toBe(90025537n); // the swap stays visible on-chain
+    const retyped = { ...swapped, extraFieldValues: { ...swapped.extraFieldValues, org: { afm: "090025537", name: "ΔΗΜΟΣ ΑΘΗΝΑΙΩΝ" } } };
+    expect(toAnchor(retyped, ZERO32, "090025537").actHash).not.toBe(a.actHash);
   });
 });
 
@@ -246,7 +271,10 @@ describe("adaFromKey", () => {
 
 describe("renderPage", () => {
   it("escapes Diavgeia-sourced text and leaves out subjects and payee names", async () => {
-    const c = clientWith((f) => { for (const d of f.decisions) d.extraFieldValues.org.name = `<script>alert(1)</script>`; });
+    const c = clientWith((f) => {
+      f.organizations["6013"].label = `<script>alert(1)</script>`;
+      f.decisions.push(swappedAct(f.decisions[0]));
+    });
     const r = await buildReport(c, reader(new Map()), P);
     const html = renderPage(r, { source: "fixture", fixturePath: "x.json", generatedAt: new Date(0), registry: "0xabc", chainId: 31337 });
     expect(html).not.toContain("<script>");
@@ -256,5 +284,8 @@ describe("renderPage", () => {
       expect(html).not.toContain(d.extraFieldValues.sponsor![0].sponsorAFMName!.name!);
     }
     expect(html).toContain("not the live portal");
+    expect(html).toContain("0 act(s) leave the payer field empty and 1 name a payer other than this organisation");
+    expect(html).toContain(">61Θ6Ω6Μ-2ΑΗ</a></td></tr>");
+    expect(html).not.toContain("996607880"); // the other party's VAT stays on the portal
   });
 });

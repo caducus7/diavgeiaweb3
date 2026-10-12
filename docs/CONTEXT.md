@@ -90,13 +90,11 @@ a crypto audience.
       act. Keep the rule (the chain then disagrees with the portal for that act, visibly), or allow a version
       after a void? Changes the contract and SPEC §5. Default kept on 2026-10-11 (the project owner chose the
       defaults): a void stays final. Revisit if un-voids turn out to be common.
-- [ ] Payer field: the anchor's `payerVat` comes from the free-entered `extraFieldValues.org.afm`, which is
-      wrong or empty on two 2025 acts. Diavgeia's `organizationId` is authoritative. Should the signer's
-      authority be checked against the org rather than the typed VAT? Changes the anchor semantics. Default
-      kept on 2026-10-11: the typed VAT, so a wrong one stays visible as `unanchorable` rather than hidden.
-      **Reopened 2026-10-12 by Amorgos:** its typed payer is `null` on 647 of 681 versions, so under this
-      default 648 of its 671 acts are unanchorable and its "difference" (7,396,087.80 EUR) only measures
-      that. Needs the owner's decision before any body other than Athens is meaningful.
+- [x] Payer field. **Decided 2026-10-12 by the project owner:** the anchor's `payerVat` is the publishing
+      organisation's VAT from its `/organizations` record, not the free-entered `extraFieldValues.org.afm`
+      (SPEC §4). The typed payer stays in the hash and is reported as a data-quality note. Reason: Amorgos
+      types no payer on 647 of 681 versions, so under the earlier default (typed VAT, kept 2026-10-11) 648 of
+      its 671 acts could not be anchored and its "difference" (7,396,087.80 EUR) measured only that.
 - [x] Recordings of live runs are not committed (payee names of natural persons; 11.7 MB for a year). Two
       recordings of Athens 2025 were identical, so `record` rebuilds one in about 4 minutes.
 - [x] Version log `status`: only `PUBLISHED` in all of Athens 2025. Unknown statuses stay a `history-error`.

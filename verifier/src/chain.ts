@@ -110,12 +110,14 @@ export interface AnchorStruct {
   prevAnchor: Hex; contractRef: Hex; signer: Address; anchoredAt: bigint; voided: boolean;
 }
 
-export function toAnchor(d: DiavgeiaDecision, prevAnchor: Hex): AnchorStruct {
+/** `orgVat` is the publishing organisation's VAT (its /organizations record), not the typed payer, which acts
+ *  often leave empty or get wrong. The typed payer is still in actHash (SPEC §2, §4). */
+export function toAnchor(d: DiavgeiaDecision, prevAnchor: Hex, orgVat: string): AnchorStruct {
   const sponsor = d.extraFieldValues?.sponsor?.[0];
   return {
     actHash: actHash(d),
     actType: actTypeKey(d.decisionTypeId),
-    payerVat: vatToUint(d.extraFieldValues?.org?.afm ?? ""),
+    payerVat: vatToUint(orgVat),
     payeeVat: vatToUint(sponsor?.sponsorAFMName?.afm ?? ""),
     amountCents: toCents(sponsor?.expenseAmount?.amount),
     issueDate: unixDay(d.issueDate),
@@ -147,9 +149,9 @@ export async function readVersions(dep: Deployment, ada: string): Promise<Anchor
 }
 
 /** Anchor one version; returns the on-chain version number. */
-export async function anchorOne(dep: Deployment, d: DiavgeiaDecision, prevAnchor: Hex, key: Hex): Promise<number> {
+export async function anchorOne(dep: Deployment, d: DiavgeiaDecision, prevAnchor: Hex, key: Hex, orgVat: string): Promise<number> {
   const reg = registry(dep, key);
-  const h = await reg.write.anchor([adaKey(d.ada), toAnchor(d, prevAnchor)]);
+  const h = await reg.write.anchor([adaKey(d.ada), toAnchor(d, prevAnchor, orgVat)]);
   const rc = await publicClient.waitForTransactionReceipt({ hash: h });
   const logs = parseEventLogs({ abi: artifact("ActRegistry").abi, logs: rc.logs, eventName: "Anchored" });
   return Number((logs[0] as unknown as { args: { version: number } }).args.version);

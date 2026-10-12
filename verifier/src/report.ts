@@ -27,7 +27,7 @@ export interface ChainReader {
   anchoredAdas(): Promise<string[]>;
 }
 
-export type Status = "ok" | "void" | "unanchored" | "unanchorable" | "chain-behind" | "mismatch" | "chain-ahead" | "portal-missing" | "history-error";
+export type Status = "ok" | "void" | "unanchored" | "chain-behind" | "mismatch" | "chain-ahead" | "portal-missing" | "history-error";
 
 /** Statuses that mean the portal and the chain disagree about published content. */
 export const ALARM: ReadonlySet<Status> = new Set(["mismatch", "chain-ahead", "portal-missing", "history-error"]);
@@ -67,6 +67,9 @@ export interface Report {
   signerIssues: Array<{ ada: string; signerId: string; issue: string }>;
   /** "unavailable" when the source holds no signer records, so nothing above was checked. */
   signerChecks: "done" | "unavailable";
+  /** What the latest versions type in the payer field. Anchors carry the organisation's VAT whatever is typed;
+   *  the typed payer stays in the hash. Notes on data quality at source, not alarms. */
+  payerNotes: { empty: number; other: Array<{ ada: string; typedVat: string }> };
   alarm: boolean;
 }
 
@@ -85,20 +88,40 @@ export async function versionsOf(client: DiavgeiaClient, latest: DiavgeiaDecisio
   for (const v of ordered) {
     if (v.versionId === latest.versionId) { out.push(latest); continue; }
     const d = await client.decisionVersion(v.versionId);
+    // The anchor's payer is the publishing organisation, so every version must be that organisation's.
+    if (d && d.organizationId !== latest.organizationId) {
+      throw new PortalInconsistentError(latest.ada, `version ${v.versionId} belongs to org ${d.organizationId}, the act to org ${latest.organizationId}`);
+    }
     if (d) out.push(d);
     else warn(`  ! version ${v.versionId} of ${latest.ada} not retrievable; chain will start at a later version`);
   }
   return out;
 }
 
-/** Why the registry would refuse to append `next` after the chain's current `last` version, or null.
+/** Why the registry would refuse to append a version after the chain's current `last` version, or null.
  *  Mirrors ActRegistry.anchor's per-version checks; used by `anchor` (to skip with a reason) and by the report
- *  (to say whether a lagging chain is merely behind or blocked), so the two cannot drift. */
-export function anchorBlocker(next: DiavgeiaDecision, last: { voided: boolean } | null, orgVat: bigint): string | null {
+ *  (to say whether a lagging chain is merely behind or blocked), so the two cannot drift. The payer check always
+ *  passes: the anchor carries the organisation's VAT (SPEC §4), and versionsOf rejects a version of another org. */
+export function anchorBlocker(last: { voided: boolean } | null): string | null {
   if (last?.voided) return "the registry accepts nothing after a void, and the chain holds this act as voided";
-  const payer = next.extraFieldValues?.org?.afm;
-  if (vatToUint(payer ?? "") !== orgVat) return `payer VAT ${payer || "(none)"} is not the org's, so the org's signer cannot anchor it`;
   return null;
+}
+
+const typedPayer = (d: DiavgeiaDecision): bigint => vatToUint(d.extraFieldValues?.org?.afm ?? "");
+
+/** A --vat given in place of the organisation record is the VAT every anchor will carry, and the VAT the org's
+ *  key is registered for (never re-pointed). Check it against the acts that type a payer: most must agree.
+ *  Single acts with another payer are real (Athens 2025 has one with payer and payee swapped), so a window
+ *  with under 3 typed payers only needs one to agree. No typed payer at all leaves nothing to check against. */
+export function checkFallbackVat(acts: DiavgeiaDecision[], org: string, vat: string): void {
+  const typed = acts.map(typedPayer).filter((v) => v !== 0n);
+  if (!acts.length) return;
+  const fix = "use a source with the organisation record (record the window again)";
+  if (!typed.length) throw new Error(`no org ${org} act in this window types a payer VAT, so --vat ${vat} cannot be checked; ${fix}`);
+  const matching = typed.filter((v) => v === vatToUint(vat)).length;
+  if (typed.length >= 3 ? matching * 2 < typed.length : matching === 0) {
+    throw new Error(`only ${matching} of ${typed.length} org ${org} acts that type a payer carry VAT ${vat}; pass --vat with the org's VAT, or ${fix}`);
+  }
 }
 
 const firstAmount = (d: DiavgeiaDecision): bigint => toCents(d.extraFieldValues?.sponsor?.[0]?.expenseAmount?.amount);
@@ -110,19 +133,18 @@ export async function buildReport(client: DiavgeiaClient, chain: ChainReader, p:
   // The portal-missing scan filters anchors by orgVat. A wrong VAT (e.g. the Athens default with another
   // --org) would silently hide deletions, so refuse rather than report on the wrong organisation.
   const orgVat = vatToUint(p.orgVat);
-  // Single acts with another payer are real (Athens 2025 has one with payer and payee swapped, and one with no
-  // payer); they are reported per act below. Most acts disagreeing means --vat is wrong.
-  // Windows under 3 acts are exempt: one odd act there would otherwise abort a correct --vat.
-  const matching = latest.filter((l) => vatToUint(l.extraFieldValues?.org?.afm ?? "") === orgVat).length;
-  if (!p.vatFromRegistry && latest.length >= 3 && matching * 2 < latest.length) {
-    throw new Error(`only ${matching} of ${latest.length} org ${p.org} acts carry VAT ${p.orgVat}; pass --vat with the org's VAT`);
-  }
+  if (!p.vatFromRegistry) checkFallbackVat(latest, p.org, p.orgVat);
   const findings: Finding[] = [];
   let portalTotal = 0n, chainTotal = 0n, multiPayee = 0, nonEur = 0, noAmount = 0;
-  let orgName: string | null = null;
+  const payerNotes: Report["payerNotes"] = { empty: 0, other: [] };
+  // The name from Diavgeia's organisation record; the typed payer name can be another party's (a swapped act).
+  let orgName: string | null = (await client.organization(p.org))?.label.normalize("NFC")
+    ?? latest.find((l) => typedPayer(l) === orgVat)?.extraFieldValues?.org?.name?.normalize("NFC") ?? null;
 
   for (const l of latest) {
-    orgName ??= l.extraFieldValues?.org?.name?.normalize("NFC") ?? null;
+    const typed = typedPayer(l);
+    if (typed === 0n) payerNotes.empty++;
+    else if (typed !== orgVat) payerNotes.other.push({ ada: l.ada, typedVat: l.extraFieldValues!.org!.afm! });
     const sponsors = l.extraFieldValues?.sponsor ?? [];
     if (sponsors.length > 1) multiPayee++;
     if (sponsors.some((s) => (s.expenseAmount?.currency ?? "EUR") !== "EUR")) nonEur++;
@@ -147,13 +169,7 @@ export async function buildReport(client: DiavgeiaClient, chain: ChainReader, p:
       continue;
     }
 
-    if (!last) {
-      // Judge by v1, the version the registry would see first; a later bad version only blocks what follows it.
-      const why = anchorBlocker(vs[0], null, orgVat);
-      if (why) f("unanchorable", `v1: ${why}`);
-      else f("unanchored", `portal has ${vs.length} version(s), chain has none`);
-      continue;
-    }
+    if (!last) { f("unanchored", `portal has ${vs.length} version(s), chain has none`); continue; }
 
     // Compare position by position. The chain may lag the portal (a version not
     // yet anchored) but must never disagree with it on a version both hold.
@@ -168,7 +184,7 @@ export async function buildReport(client: DiavgeiaClient, chain: ChainReader, p:
     }
     if (onChain.length > vs.length) { f("chain-ahead", `chain has ${onChain.length} versions, portal shows ${vs.length}`); continue; }
     if (onChain.length < vs.length) {
-      const why = anchorBlocker(vs[onChain.length], last, orgVat);
+      const why = anchorBlocker(last);
       f("chain-behind", why
         ? `chain has ${onChain.length} of ${vs.length} portal versions; v${onChain.length + 1} is blocked (${why}), and every later version with it`
         : `chain has ${onChain.length} of ${vs.length} portal versions; the rest are not anchored yet`);
@@ -194,7 +210,7 @@ export async function buildReport(client: DiavgeiaClient, chain: ChainReader, p:
   const counts: Partial<Record<Status, number>> = {};
   for (const x of findings) counts[x.status] = (counts[x.status] ?? 0) + 1;
   return {
-    params: p, orgName, findings, portalTotal, chainTotal, difference: portalTotal - chainTotal, counts, multiPayee, nonEur, noAmount, signers, signerIssues, signerChecks,
+    params: p, orgName, findings, portalTotal, chainTotal, difference: portalTotal - chainTotal, counts, multiPayee, nonEur, noAmount, signers, signerIssues, signerChecks, payerNotes,
     alarm: findings.some((x) => ALARM.has(x.status)),
   };
 }

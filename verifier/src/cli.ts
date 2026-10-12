@@ -20,14 +20,14 @@ import { makeClient, BASE } from "./diavgeia.js";
 import { RecordingClient, prefetch } from "./record.js";
 import { liveCheck, type FixtureFile } from "./livecheck.js";
 import { parseDecision } from "./validate.js";
-import { actHash, adaKey, toCents, isVoid, vatToUint } from "./canonical.js";
+import { actHash, adaKey, toCents, isVoid } from "./canonical.js";
 import { isPerActError } from "./validate.js";
 import {
   deploy, loadDeployment, anchorOne, readVersions, gate, graph, ZERO32, publicClient, chainReader, ensureOrgSigner, isLocalChain, ADMIN_KEY,
   type Deployment,
 } from "./chain.js";
 import { deriveOrgKey, resolveSeed } from "./orgkeys.js";
-import { buildReport, versionsOf, formatEur, reportJson, anchorBlocker, type ReportParams } from "./report.js";
+import { buildReport, versionsOf, formatEur, reportJson, anchorBlocker, checkFallbackVat, type ReportParams } from "./report.js";
 import { renderPage } from "./page.js";
 import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -88,9 +88,11 @@ async function cmdDeploy() {
 
 async function cmdAnchor() {
   const dep = loadDeployment();
-  const vat = await orgVat();
-  const key = await orgSigner(dep, vat);
+  const { vat, fromRegistry } = await orgVatSourced();
   const latest = await client.search({ org: a.org!, type: a.type!, fromIssueDate: a.from!, toIssueDate: a.to! });
+  // Every anchor will carry this VAT and the key is registered for it, so a fallback --vat is checked first.
+  if (!fromRegistry) checkFallbackVat(latest, a.org!, vat);
+  const key = await orgSigner(dep, vat);
   console.log(`${latest.length} acts from Diavgeia (org ${a.org}, ${a.type}, ${a.from}..${a.to})`);
   let anchored = 0, skipped = 0, failed = 0, refused = 0;
   for (const l of latest) {
@@ -110,14 +112,14 @@ async function cmdAnchor() {
     for (let i = onChain.length; i < vs.length; i++) {
       const d = vs[i];
       // The registry's own refusals, checked per version so earlier good versions still go on chain.
-      const why = anchorBlocker(d, lastVoided === null ? null : { voided: lastVoided }, vatToUint(vat));
+      const why = anchorBlocker(lastVoided === null ? null : { voided: lastVoided });
       if (why) {
         refused++;
         console.warn(`  ! not anchored ${d.ada} v${i + 1}${i + 1 < vs.length ? ` (and ${vs.length - i - 1} later)` : ""}: ${why}`);
         break;
       }
       let v: number;
-      try { v = await anchorOne(dep, d, prev, key); }
+      try { v = await anchorOne(dep, d, prev, key, vat); }
       catch (e) {
         // A contract refusal concerns this act only; anything else (RPC down) aborts.
         if (!(e instanceof BaseError && e.walk((x) => x instanceof ContractFunctionRevertedError))) throw e;
@@ -154,6 +156,9 @@ async function cmdVerify() {
     if (r.multiPayee) console.log(`  note: ${r.multiPayee} multi-payee act(s); totals count the first payee only`);
     console.log(`  signers: ${r.signers.map((s) => `${s.id} (${s.acts} acts, org-level rights ${s.orgSignRights === null ? "unknown" : s.orgSignRights ? "yes" : "no"})`).join(", ") || "none"}`);
     for (const i of r.signerIssues) console.log(`  signer issue ${i.ada} ${i.signerId}: ${i.issue}`);
+    const pn = r.payerNotes;
+    if (pn.empty || pn.other.length) console.log(`  typed payer: empty on ${pn.empty} act(s), another VAT on ${pn.other.length} (anchors carry the org's VAT)`);
+    for (const o of pn.other) console.log(`  typed payer ${o.ada}: ${o.typedVat}`);
   }
   if (r.alarm) process.exitCode = 2;
 }
