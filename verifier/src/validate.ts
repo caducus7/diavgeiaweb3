@@ -26,6 +26,11 @@ export class PortalInconsistentError extends Error {
   }
 }
 
+/** The source holds no signer registry data at all (an older recording), as opposed to "no such signer". */
+export class SignerDataUnavailable extends Error {
+  constructor() { super("this source has no signer records"); this.name = "SignerDataUnavailable"; }
+}
+
 /** Errors that concern one act and should not abort a run over many. Network and HTTP errors are not. */
 export const isPerActError = (e: unknown): e is DiavgeiaShapeError | PortalInconsistentError =>
   e instanceof DiavgeiaShapeError || e instanceof PortalInconsistentError;
@@ -145,4 +150,37 @@ export function parseIsoDay(s: string, name: string): number {
   const ms = /^\d{4}-\d{2}-\d{2}$/.test(s) ? Date.parse(s + "T00:00:00Z") : NaN;
   if (Number.isNaN(ms) || new Date(ms).toISOString().slice(0, 10) !== s) throw new Error(`${name} must be a date as YYYY-MM-DD, got ${JSON.stringify(s)}`);
   return ms;
+}
+
+/** The fields of `/organizations/{uid}.json` the verifier uses. */
+export interface OrganizationRecord { uid: string; label: string; vatNumber: string; [k: string]: unknown }
+
+export function parseOrganization(x: unknown, uid: string): OrganizationRecord {
+  const where = `organization(${uid})`;
+  if (!isObj(x)) throw new DiavgeiaShapeError(where, `expected object, got ${describe(x)}`);
+  if (str(x, "uid", where) !== uid) throw new DiavgeiaShapeError(`${where}.uid`, `record is for ${x.uid}`);
+  str(x, "label", where);
+  if (!/^\d{9}$/.test(str(x, "vatNumber", where))) throw new DiavgeiaShapeError(`${where}.vatNumber`, `expected 9 digits, got ${describe(x.vatNumber)}`);
+  return x as OrganizationRecord;
+}
+
+/** The fields of `/signers/{id}.json` the verifier uses. Names are present in the API and deliberately not read. */
+export interface SignerRecord {
+  uid: string;
+  organizationId: string;
+  activeFrom: number;
+  activeUntil: number; // the API uses a date in the year 3000 for "open-ended"
+  hasOrganizationSignRights: boolean;
+  [k: string]: unknown;
+}
+
+export function parseSigner(x: unknown, id: string): SignerRecord {
+  const where = `signer(${id})`;
+  if (!isObj(x)) throw new DiavgeiaShapeError(where, `expected object, got ${describe(x)}`);
+  if (str(x, "uid", where) !== id) throw new DiavgeiaShapeError(`${where}.uid`, `record is for ${x.uid}`);
+  str(x, "organizationId", where);
+  int(x, "activeFrom", where);
+  int(x, "activeUntil", where);
+  if (typeof x.hasOrganizationSignRights !== "boolean") throw new DiavgeiaShapeError(`${where}.hasOrganizationSignRights`, `expected boolean, got ${describe(x.hasOrganizationSignRights)}`);
+  return x as SignerRecord;
 }

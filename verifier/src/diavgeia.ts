@@ -11,7 +11,10 @@
  */
 import { readFileSync } from "node:fs";
 import type { DiavgeiaDecision } from "./canonical.js";
-import { parseDecision, parseSearchPage, parseVersionLog, parseIsoDay, PortalInconsistentError } from "./validate.js";
+import {
+  parseDecision, parseSearchPage, parseVersionLog, parseIsoDay, parseOrganization, parseSigner, PortalInconsistentError,
+  SignerDataUnavailable, type OrganizationRecord, type SignerRecord,
+} from "./validate.js";
 
 export const BASE = process.env.DIAVGEIA_BASE ?? "https://diavgeia.gov.gr/opendata";
 
@@ -32,6 +35,10 @@ export interface DiavgeiaClient {
   search(p: SearchParams): Promise<DiavgeiaDecision[]>;
   versionLog(ada: string): Promise<VersionLog | null>;
   decisionVersion(versionId: string): Promise<DiavgeiaDecision | null>;
+  /** `/organizations/{uid}.json`; the authoritative VAT of an organisation. null if unknown. */
+  organization(uid: string): Promise<OrganizationRecord | null>;
+  /** `/signers/{id}.json`; null if unknown. */
+  signer(id: string): Promise<SignerRecord | null>;
 }
 
 /** Window size the live client uses. The API clamps issue-date ranges at 180 days (inferred from one
@@ -149,6 +156,16 @@ export class LiveClient implements DiavgeiaClient {
     if (d.versionId !== versionId) throw new PortalInconsistentError(d.ada, `asked for version ${versionId}, got ${d.versionId}`);
     return d;
   }
+
+  async organization(uid: string): Promise<OrganizationRecord | null> {
+    const body = await this.get(`${this.base}/organizations/${encodeURIComponent(uid)}.json`);
+    return body === null ? null : parseOrganization(body, uid);
+  }
+
+  async signer(id: string): Promise<SignerRecord | null> {
+    const body = await this.get(`${this.base}/signers/${encodeURIComponent(id)}.json`);
+    return body === null ? null : parseSigner(body, id);
+  }
 }
 
 /** The API must return only what was asked for. If it ignored a filter (for example a Greek Β in `type`
@@ -167,13 +184,20 @@ export function outsideQuery(d: DiavgeiaDecision, p: SearchParams, from: string,
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export class FixtureClient implements DiavgeiaClient {
-  private data: { decisions: DiavgeiaDecision[]; versionlog?: Record<string, VersionLog> };
+  private data: {
+    decisions: DiavgeiaDecision[];
+    versionlog?: Record<string, VersionLog>;
+    organizations?: Record<string, OrganizationRecord>;
+    signers?: Record<string, SignerRecord>;
+  };
 
   constructor(path: string) {
     const raw = JSON.parse(readFileSync(path, "utf8"));
     if (!Array.isArray(raw?.decisions)) throw new Error(`${path}: no decisions array`);
     raw.decisions.forEach((d: unknown, i: number) => parseDecision(d, `${path} decisions[${i}]`));
     for (const [ada, log] of Object.entries(raw.versionlog ?? {})) parseVersionLog(log, ada);
+    for (const [uid, o] of Object.entries(raw.organizations ?? {})) parseOrganization(o, uid);
+    for (const [id, s] of Object.entries(raw.signers ?? {})) parseSigner(s, id);
     this.data = raw;
   }
 
@@ -195,6 +219,16 @@ export class FixtureClient implements DiavgeiaClient {
 
   async decisionVersion(versionId: string): Promise<DiavgeiaDecision | null> {
     return this.data.decisions.find((d) => d.versionId === versionId) ?? null;
+  }
+
+  async organization(uid: string): Promise<OrganizationRecord | null> {
+    return this.data.organizations?.[uid] ?? null;
+  }
+
+  async signer(id: string): Promise<SignerRecord | null> {
+    // A recording made before signers were recorded cannot say a signer is unknown, only that it never asked.
+    if (!this.data.signers) throw new SignerDataUnavailable();
+    return this.data.signers[id] ?? null;
   }
 }
 

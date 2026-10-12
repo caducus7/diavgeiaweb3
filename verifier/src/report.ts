@@ -10,7 +10,7 @@
 import type { Hex } from "viem";
 import { actHash, isVoid, toCents, unixDay, vatToUint, type DiavgeiaDecision } from "./canonical.js";
 import type { DiavgeiaClient } from "./diavgeia.js";
-import { parseIsoDay, isPerActError, PortalInconsistentError } from "./validate.js";
+import { parseIsoDay, isPerActError, PortalInconsistentError, SignerDataUnavailable, type SignerRecord } from "./validate.js";
 
 /** The fields of an on-chain anchor the report reads. */
 export interface ChainVersion {
@@ -46,6 +46,8 @@ export interface ReportParams {
   type: string;
   from: string; // YYYY-MM-DD, inclusive
   to: string;   // YYYY-MM-DD, inclusive
+  /** True when orgVat comes from Diavgeia's /organizations record, so it cannot be a typo to guard against. */
+  vatFromRegistry?: boolean;
 }
 
 export interface Report {
@@ -59,6 +61,12 @@ export interface Report {
   multiPayee: number;
   nonEur: number;
   noAmount: number; // acts whose first payee carries no amount (payroll, for one): invisible in both totals
+  /** Every signer of the window's acts (latest versions), from Diavgeia's signer registry. Ids only, no names. */
+  signers: Array<{ id: string; acts: number; orgSignRights: boolean | null }>;
+  /** Signer problems: not in the registry, of another org, or not active on the issue day. Notes, not alarms. */
+  signerIssues: Array<{ ada: string; signerId: string; issue: string }>;
+  /** "unavailable" when the source holds no signer records, so nothing above was checked. */
+  signerChecks: "done" | "unavailable";
   alarm: boolean;
 }
 
@@ -106,7 +114,7 @@ export async function buildReport(client: DiavgeiaClient, chain: ChainReader, p:
   // payer); they are reported per act below. Most acts disagreeing means --vat is wrong.
   // Windows under 3 acts are exempt: one odd act there would otherwise abort a correct --vat.
   const matching = latest.filter((l) => vatToUint(l.extraFieldValues?.org?.afm ?? "") === orgVat).length;
-  if (latest.length >= 3 && matching * 2 < latest.length) {
+  if (!p.vatFromRegistry && latest.length >= 3 && matching * 2 < latest.length) {
     throw new Error(`only ${matching} of ${latest.length} org ${p.org} acts carry VAT ${p.orgVat}; pass --vat with the org's VAT`);
   }
   const findings: Finding[] = [];
@@ -181,12 +189,52 @@ export async function buildReport(client: DiavgeiaClient, chain: ChainReader, p:
     findings.push({ ada, status: "portal-missing", detail: `anchored (${onChain.length} version(s)) but not returned by the portal`, portalCents: null, chainCents: last.amountCents });
   }
 
+  const { signers, signerIssues, signerChecks } = await checkSigners(client, latest);
+
   const counts: Partial<Record<Status, number>> = {};
   for (const x of findings) counts[x.status] = (counts[x.status] ?? 0) + 1;
   return {
-    params: p, orgName, findings, portalTotal, chainTotal, difference: portalTotal - chainTotal, counts, multiPayee, nonEur, noAmount,
+    params: p, orgName, findings, portalTotal, chainTotal, difference: portalTotal - chainTotal, counts, multiPayee, nonEur, noAmount, signers, signerIssues, signerChecks,
     alarm: findings.some((x) => ALARM.has(x.status)),
   };
+}
+
+/** Check each act's signers against Diavgeia's signer registry. Supplementary: no failure here may hide the
+ *  tamper findings, so every lookup error becomes a signer issue instead of aborting the report.
+ *  The window: activeFrom is 00:00 UTC like issueDate and is compared by day; activeUntil is Athens midnight
+ *  (2999-12-31T22:00Z for open-ended) and is treated as exclusive, so its day itself is the first inactive one. */
+async function checkSigners(client: DiavgeiaClient, acts: DiavgeiaDecision[]): Promise<Pick<Report, "signers" | "signerIssues" | "signerChecks">> {
+  const records = new Map<string, SignerRecord | null | string>(); // string: the lookup failed
+  const counts = new Map<string, number>();
+  const signerIssues: Report["signerIssues"] = [];
+  for (const act of acts) for (const id of act.signerIds ?? []) counts.set(id, (counts.get(id) ?? 0) + 1);
+  for (const id of counts.keys()) {
+    try { records.set(id, await client.signer(id)); }
+    catch (e) {
+      if (e instanceof SignerDataUnavailable) {
+        const signers = [...counts].map(([sid, n]) => ({ id: sid, acts: n, orgSignRights: null })).sort((x, y) => y.acts - x.acts || x.id.localeCompare(y.id));
+        return { signers, signerIssues: [], signerChecks: "unavailable" };
+      }
+      records.set(id, (e as Error).message);
+    }
+  }
+  const lastDay = (ms: number) => new Date(ms - 1).toISOString().slice(0, 10);
+  for (const act of acts) {
+    for (const id of act.signerIds ?? []) {
+      const s = records.get(id)!;
+      const issue = (why: string) => signerIssues.push({ ada: act.ada, signerId: id, issue: why });
+      if (s === null) { issue("not in Diavgeia's signer registry"); continue; }
+      if (typeof s === "string") { issue(`signer record unavailable: ${s}`); continue; }
+      if (s.organizationId !== act.organizationId) issue(`signer belongs to org ${s.organizationId}, act to org ${act.organizationId}`);
+      if (unixDay(act.issueDate) < unixDay(s.activeFrom) || act.issueDate >= s.activeUntil)
+        issue(`signer not active on the issue day (active ${new Date(s.activeFrom).toISOString().slice(0, 10)} to ${lastDay(s.activeUntil)})`);
+    }
+  }
+  const signers = [...counts].map(([id, n]) => {
+    const s = records.get(id);
+    return { id, acts: n, orgSignRights: s && typeof s !== "string" ? s.hasOrganizationSignRights : null };
+  }).sort((x, y) => y.acts - x.acts || x.id.localeCompare(y.id));
+  return { signers, signerIssues, signerChecks: "done" };
 }
 
 /** Integer cents to "1,234.56 EUR" without passing through a float. */

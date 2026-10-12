@@ -45,6 +45,11 @@ export function renderPage(r: Report, m: PageMeta): string {
     .map((f) => `<tr class="s-${f.status}"><td><a href="https://diavgeia.gov.gr/decision/view/${encodeURIComponent(f.ada)}">${esc(f.ada)}</a></td>`
       + `<td>${esc(LABEL[f.status])}</td><td class="n">${cents(f.portalCents)}</td><td class="n">${cents(f.chainCents)}</td><td>${esc(f.detail)}</td></tr>`)
     .join("\n");
+  const signerRows = r.signers.map((s) =>
+    `<tr><td>${esc(s.id)}</td><td class="n">${s.acts}</td><td>${s.orgSignRights === null ? "unknown" : s.orgSignRights ? "yes" : "no"}</td></tr>`).join("\n");
+  const issueRows = r.signerIssues.map((i) =>
+    `<tr><td>${esc(i.ada)}</td><td>${esc(i.signerId)}</td><td>${esc(i.issue)}</td></tr>`).join("\n");
+  const noRights = r.signers.filter((s) => s.orgSignRights === false).reduce((n, s) => n + s.acts, 0);
   const counts = ORDER.filter((s) => r.counts[s]).map((s) => `${esc(LABEL[s])}: ${r.counts[s]}`).join(" &middot; ");
 
   const caveats = [
@@ -100,6 +105,24 @@ a { color:inherit; } ul { color:var(--mute); padding-left:20px; } footer { color
 ${rows}
 </tbody>
 </table></div>
+<h2>Who signed</h2>
+<p>${r.signers.length} signer(s) from Diavgeia's signer registry, by id (names are on the portal, not repeated here).
+${noRights ? `${noRights} of the window's acts were signed by signers without organisation-level signing rights.` : ""}
+${r.signerChecks === "unavailable" ? "<strong>Signer checks were not run: this data source holds no signer records.</strong>"
+    : r.signerIssues.length ? `<strong>${r.signerIssues.length} signer issue(s) below.</strong>`
+    : r.signers.length ? "Every signer belongs to this organisation and was active on the issue day." : "No act in this window lists a signer."}</p>
+<div class="scroll"><table>
+<thead><tr><th>Signer id</th><th class="n">Acts</th><th>Organisation-level rights</th></tr></thead>
+<tbody>
+${signerRows}
+</tbody>
+</table></div>
+${r.signerIssues.length ? `<div class="scroll"><table>
+<thead><tr><th>ADA</th><th>Signer id</th><th>Issue</th></tr></thead>
+<tbody>
+${issueRows}
+</tbody>
+</table></div>` : ""}
 <h2>Read this before quoting the number</h2>
 <ul>
 ${caveats}

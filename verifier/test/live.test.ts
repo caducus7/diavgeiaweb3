@@ -12,7 +12,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const FIXTURE = new URL("../fixtures/athens-2025-11.json", import.meta.url).pathname;
-const fx = JSON.parse(readFileSync(FIXTURE, "utf8")) as { decisions: DiavgeiaDecision[]; versionlog: Record<string, VersionLog> };
+const fx = JSON.parse(readFileSync(FIXTURE, "utf8")) as {
+  decisions: DiavgeiaDecision[]; versionlog: Record<string, VersionLog>;
+  organizations: Record<string, unknown>; signers: Record<string, unknown>;
+};
 const paints = fx.decisions[0];
 const P: ReportParams = { org: "6013", orgVat: "090025537", type: "Β.2.2", from: "2025-11-24", to: "2025-11-30" };
 const DAY = 86_400_000;
@@ -54,6 +57,10 @@ function mockApi(decisions: DiavgeiaDecision[], logs: Record<string, VersionLog>
     }
     const vl = path.match(/\/decisions\/(.+)\/versionlog\.json$/);
     if (vl) return logs[vl[1]] ? json(logs[vl[1]]) : new Response("not found", { status: 404 });
+    const org = path.match(/\/organizations\/(.+)\.json$/);
+    if (org) return fx.organizations[org[1]] ? json(fx.organizations[org[1]]) : new Response("not found", { status: 404 });
+    const sig = path.match(/\/signers\/(.+)\.json$/);
+    if (sig) return fx.signers[sig[1]] ? json(fx.signers[sig[1]]) : new Response("not found", { status: 404 });
     const v = path.match(/\/decisions\/v\/(.+)\.json$/);
     if (v) {
       const d = decisions.find((x) => x.versionId === v[1]);
@@ -252,7 +259,7 @@ describe("date ranges", () => {
 
   it("buildReport rejects a bad date before querying anything", async () => {
     let searched = false;
-    const client = { search: async () => { searched = true; return []; }, versionLog: async () => null, decisionVersion: async () => null };
+    const client = { search: async () => { searched = true; return []; }, versionLog: async () => null, decisionVersion: async () => null, organization: async () => null, signer: async () => null };
     const chain: ChainReader = { versions: async () => [], anchoredAdas: async () => [] };
     await expect(buildReport(client, chain, { ...P, to: "2025-11-31" })).rejects.toThrow(/YYYY-MM-DD/);
     expect(searched).toBe(false);
@@ -279,7 +286,7 @@ describe("live-check", () => {
   it("all ok when the API returns what the fixture holds", async () => {
     const { f } = mockApi(fx.decisions, fx.versionlog);
     const lines = await liveCheck(live(f), fx as never, quiet);
-    expect(lines.length).toBe(1 + fx.decisions.length);
+    expect(lines.length).toBe(1 + fx.decisions.length + Object.keys(fx.organizations).length + Object.keys(fx.signers).length);
     expect(lines.filter((l) => !l.ok)).toEqual([]);
   });
 
@@ -444,6 +451,33 @@ describe("second review fixes", () => {
   });
 });
 
+describe("fourth review fixes", () => {
+  it("#10 live-check flags a signer whose registry record changed since the fixture", async () => {
+    const changed = { ...fx, signers: { ...fx.signers, "126213": { ...(fx.signers["126213"] as object), activeUntil: 1767225600000 } } };
+    const { f } = mockApi(fx.decisions, fx.versionlog);
+    const bad = (await liveCheck(live(f), changed as never, quiet)).filter((l) => !l.ok);
+    expect(bad.map((l) => l.what)).toEqual(["signer 126213"]);
+  });
+
+  it("#2 a signer record that cannot be fetched is noted, and the recording still completes", async () => {
+    const { f: base } = mockApi(fx.decisions, fx.versionlog);
+    const f = (async (u: URL) => (String(u).includes("/signers/126213") ? new Response("boom", { status: 403 }) : base(u))) as unknown as typeof fetch;
+    const r = await prefetch(new RecordingClient(live(f), "x"), { org: "6013", type: "Β.2.2", fromIssueDate: "2025-11-24", toIssueDate: "2025-11-30" });
+    expect(r.acts).toBe(4);
+    expect(r.signerErrors.map((e) => e.id)).toEqual(["126213"]);
+  });
+
+  it("#3 a signer lookup failure in verify is a signer issue, not an abort", async () => {
+    const { f: base } = mockApi(fx.decisions, fx.versionlog);
+    const f = (async (u: URL) => (String(u).includes("/signers/") ? new Response("boom", { status: 403 }) : base(u))) as unknown as typeof fetch;
+    const chain: ChainReader = { versions: async () => [], anchoredAdas: async () => [] };
+    const r = await buildReport(live(f), chain, P);
+    expect(r.portalTotal).toBe(62425209n);
+    expect(r.signerIssues.every((i) => /signer record unavailable: diavgeia 403/.test(i.issue))).toBe(true);
+    expect(r.signerIssues.length).toBe(4);
+  });
+});
+
 describe("prefetch", () => {
   it("fetches every history with bounded concurrency and replays to the same report", async () => {
     let inFlight = 0, peak = 0;
@@ -451,7 +485,7 @@ describe("prefetch", () => {
     const f = (async (u: URL) => { inFlight++; peak = Math.max(peak, inFlight); await new Promise((r) => setTimeout(r, 5)); try { return await base(u); } finally { inFlight--; } }) as unknown as typeof fetch;
     const rec = new RecordingClient(live(f), "https://diavgeia.gov.gr/opendata");
     const r = await prefetch(rec, { org: "6013", type: "Β.2.2", fromIssueDate: "2025-11-24", toIssueDate: "2025-11-30" }, 2);
-    expect(r).toEqual({ acts: 4, versions: 5, perActErrors: [], missingVersions: [] });
+    expect(r).toMatchObject({ acts: 4, versions: 5, perActErrors: [], missingVersions: [] });
     expect(peak).toBeLessThanOrEqual(2);
     const path = join(mkdtempSync(join(tmpdir(), "dv-pre-")), "p.json");
     rec.save(path);

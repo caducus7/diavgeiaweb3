@@ -23,8 +23,10 @@ import { parseDecision } from "./validate.js";
 import { actHash, adaKey, toCents, isVoid, vatToUint } from "./canonical.js";
 import { isPerActError } from "./validate.js";
 import {
-  deploy, loadDeployment, anchorOne, readVersions, gate, graph, ZERO32, publicClient, chainReader,
+  deploy, loadDeployment, anchorOne, readVersions, gate, graph, ZERO32, publicClient, chainReader, ensureOrgSigner, isLocalChain, ADMIN_KEY,
+  type Deployment,
 } from "./chain.js";
+import { deriveOrgKey, resolveSeed } from "./orgkeys.js";
 import { buildReport, versionsOf, formatEur, reportJson, anchorBlocker, type ReportParams } from "./report.js";
 import { renderPage } from "./page.js";
 import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
@@ -35,7 +37,7 @@ const { positionals, values: a } = parseArgs({
   allowPositionals: true,
   options: {
     org: { type: "string", default: "6013" },
-    vat: { type: "string", default: "090025537" },
+    vat: { type: "string" }, // only when no /organizations record is available; must agree with it otherwise
     type: { type: "string", default: "Β.2.2" },
     from: { type: "string", default: "2025-11-24" },
     to: { type: "string", default: "2025-11-30" },
@@ -58,13 +60,36 @@ const recorder = RECORD ? new RecordingClient(makeClient(), BASE) : null;
 const client = recorder ?? makeClient();
 const eur = formatEur;
 
+/** The organisation's VAT from Diavgeia's own record (`/organizations/{uid}.json`), not from what acts type in.
+ *  --vat is accepted only as a fallback when there is no record (an older recording), and must agree with it. */
+async function orgVatSourced(): Promise<{ vat: string; fromRegistry: boolean }> {
+  const o = await client.organization(a.org!);
+  if (o) {
+    if (a.vat && a.vat !== o.vatNumber) throw new Error(`--vat ${a.vat} contradicts Diavgeia's record for org ${a.org} (${o.vatNumber})`);
+    return { vat: o.vatNumber, fromRegistry: true };
+  }
+  if (a.vat) { console.warn(`  ! no organisation record for ${a.org} in this source; using --vat ${a.vat}`); return { vat: a.vat, fromRegistry: false }; }
+  throw new Error(`no /organizations/${a.org} record in this source; pass --vat`);
+}
+const orgVat = async () => (await orgVatSourced()).vat;
+
+/** The organisation's derived anchoring key, registered (and funded on Anvil) if it is not yet a signer. */
+async function orgSigner(dep: Deployment, vat: string): Promise<Hex> {
+  const key = deriveOrgKey(resolveSeed(process.env, await isLocalChain()), a.org!);
+  const { address, registered } = await ensureOrgSigner(dep, a.org!, vat, key);
+  if (registered) console.log(`  registered org ${a.org} signer ${address} for VAT ${vat}`);
+  return key;
+}
+
 async function cmdDeploy() {
-  const d = await deploy(a.vat!);
-  console.log(`deployed\n  ActRegistry      ${d.registry}\n  PaymentGate      ${d.gate}\n  ProcurementGraph ${d.graph}\n  MockRail         ${d.rail}\n  signer ${d.signer} -> org VAT ${d.signerOrgVat}`);
+  const d = await deploy();
+  console.log(`deployed\n  ActRegistry      ${d.registry}\n  PaymentGate      ${d.gate}\n  ProcurementGraph ${d.graph}\n  MockRail         ${d.rail}\n  org signers are derived and registered on first anchor`);
 }
 
 async function cmdAnchor() {
   const dep = loadDeployment();
+  const vat = await orgVat();
+  const key = await orgSigner(dep, vat);
   const latest = await client.search({ org: a.org!, type: a.type!, fromIssueDate: a.from!, toIssueDate: a.to! });
   console.log(`${latest.length} acts from Diavgeia (org ${a.org}, ${a.type}, ${a.from}..${a.to})`);
   let anchored = 0, skipped = 0, failed = 0, refused = 0;
@@ -85,14 +110,14 @@ async function cmdAnchor() {
     for (let i = onChain.length; i < vs.length; i++) {
       const d = vs[i];
       // The registry's own refusals, checked per version so earlier good versions still go on chain.
-      const why = anchorBlocker(d, lastVoided === null ? null : { voided: lastVoided }, vatToUint(dep.signerOrgVat));
+      const why = anchorBlocker(d, lastVoided === null ? null : { voided: lastVoided }, vatToUint(vat));
       if (why) {
         refused++;
         console.warn(`  ! not anchored ${d.ada} v${i + 1}${i + 1 < vs.length ? ` (and ${vs.length - i - 1} later)` : ""}: ${why}`);
         break;
       }
       let v: number;
-      try { v = await anchorOne(dep, d, prev); }
+      try { v = await anchorOne(dep, d, prev, key); }
       catch (e) {
         // A contract refusal concerns this act only; anything else (RPC down) aborts.
         if (!(e instanceof BaseError && e.walk((x) => x instanceof ContractFunctionRevertedError))) throw e;
@@ -113,10 +138,13 @@ async function cmdAnchor() {
   if (failed) process.exitCode = 2;
 }
 
-const params = (): ReportParams => ({ org: a.org!, orgVat: a.vat!, type: a.type!, from: a.from!, to: a.to! });
+const params = async (): Promise<ReportParams> => {
+  const { vat, fromRegistry } = await orgVatSourced();
+  return { org: a.org!, orgVat: vat, vatFromRegistry: fromRegistry, type: a.type!, from: a.from!, to: a.to! };
+};
 
 async function cmdVerify() {
-  const r = await buildReport(client, chainReader(loadDeployment()), params());
+  const r = await buildReport(client, chainReader(loadDeployment()), await params());
   if (a.json) { console.log(JSON.stringify(reportJson(r), null, 2)); }
   else {
     console.log(`verify: org ${a.org}, ${a.type}, ${a.from}..${a.to}`);
@@ -124,13 +152,15 @@ async function cmdVerify() {
     console.log(`\n  portal total (non-void)  ${eur(r.portalTotal)}\n  chain total  (non-void)  ${eur(r.chainTotal)}\n  difference               ${eur(r.difference)}`);
     console.log(`  ${Object.entries(r.counts).map(([k, v]) => `${k}=${v}`).join("  ")}`);
     if (r.multiPayee) console.log(`  note: ${r.multiPayee} multi-payee act(s); totals count the first payee only`);
+    console.log(`  signers: ${r.signers.map((s) => `${s.id} (${s.acts} acts, org-level rights ${s.orgSignRights === null ? "unknown" : s.orgSignRights ? "yes" : "no"})`).join(", ") || "none"}`);
+    for (const i of r.signerIssues) console.log(`  signer issue ${i.ada} ${i.signerId}: ${i.issue}`);
   }
   if (r.alarm) process.exitCode = 2;
 }
 
 async function cmdPage() {
   const dep = loadDeployment();
-  const r = await buildReport(client, chainReader(dep), params());
+  const r = await buildReport(client, chainReader(dep), await params());
   const out = a.out ?? `out/${a.org}-${a.from}-${a.to}.html`;
   mkdirSync(dirname(out), { recursive: true });
   const fixture = process.env.DIAVGEIA_FIXTURE;
@@ -164,7 +194,8 @@ async function cmdRecord() {
   console.log(`recorded ${r.acts} acts, ${r.versions} versions (${rec.size} records) to ${a.out} in ${((Date.now() - t0) / 1000).toFixed(0)}s`);
   for (const e of r.perActErrors) console.log(`  history-error ${e.ada}: ${e.error}`);
   for (const m of r.missingVersions) console.log(`  missing version ${m}`);
-  if (r.perActErrors.length || r.missingVersions.length) process.exitCode = 2;
+  for (const s of r.signerErrors) console.log(`  signer ${s.id} not recorded: ${s.error}`);
+  if (r.perActErrors.length || r.missingVersions.length || r.signerErrors.length) process.exitCode = 2;
 }
 
 async function cmdLiveCheck() {
@@ -198,7 +229,8 @@ async function cmdPay() {
 async function cmdAward() {
   const dep = loadDeployment();
   if (!a.ref || !a.ceiling) throw new Error("--ref and --ceiling required");
-  const h = await graph(dep).write.registerAward([adaKey(a.ref), toCents(Number(a.ceiling)), Number(a.cpv), Number(a.kae)]);
+  const key = await orgSigner(dep, await orgVat());
+  const h = await graph(dep, key).write.registerAward([adaKey(a.ref), toCents(Number(a.ceiling)), Number(a.cpv), Number(a.kae)]);
   await publicClient.waitForTransactionReceipt({ hash: h });
   console.log(`award ${a.ref} registered, ceiling ${eur(toCents(Number(a.ceiling)))}`);
 }
@@ -206,7 +238,8 @@ async function cmdAward() {
 async function cmdLink() {
   const dep = loadDeployment();
   if (!a.ada) throw new Error("--ada required");
-  const g = graph(dep);
+  // linkPayment is permissionless: any funded key will do, so no org key, seed or org record is needed
+  const g = graph(dep, ADMIN_KEY);
   const h = await g.write.linkPayment([adaKey(a.ada)]);
   const rc = await publicClient.waitForTransactionReceipt({ hash: h });
   const vs = await readVersions(dep, a.ada);

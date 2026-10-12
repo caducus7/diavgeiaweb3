@@ -2,6 +2,7 @@
   "_source": "https://diavgeia.gov.gr/opendata/search.json?org=6013&type=Β.2.2&from_issue_date=2025-11-24&to_issue_date=2025-11-30",
   "_fetched": "2026-10-11",
   "_sample": "4 of the 72 acts the _source query returned on 2026-10-11, chosen by hand. live-check treats other live acts in the window as expected.",
+  "_registries_fetched": "2026-10-12: organizations and signers below are verbatim /organizations/{uid}.json and /signers/{id}.json records.",
   "_notes": [
     "Records 0-3 are verbatim API output.",
     "Record 4 is the ORIGINAL version of ΨΟΣΝΩ6Μ-Θ6Ε (versionId 303d2b3a…), reconstructed field by field from /opendata/decisions/v/303d2b3a-90a2-4a17-a6b2-79421af7095e.json and the versionlog; the sponsor name is assumed identical to the later version. Its subject lacked the later 'ΑΚΥΡΟ ΧΡΗΜΑΤΙΚΟ ΕΝΤΑΛΜΑ.' prefix."
@@ -15,5 +16,106 @@
   ],
   "versionlog": {
     "ΨΟΣΝΩ6Μ-Θ6Ε": {"versions":[{"versionId":"303d2b3a-90a2-4a17-a6b2-79421af7095e","creator":"6013_53","versionTimestamp":1764229685478,"description":null,"status":"PUBLISHED","correctedVersionId":null},{"versionId":"87e590cb-ac02-421b-97e3-3386b2d16fd6","creator":"6013_53","versionTimestamp":1764846050547,"description":null,"status":"PUBLISHED","correctedVersionId":"303d2b3a-90a2-4a17-a6b2-79421af7095e"}],"ada":"ΨΟΣΝΩ6Μ-Θ6Ε","organizationId":"6013"}
+  },
+  "organizations": {
+    "6013": {
+      "uid": "6013",
+      "label": "ΔΗΜΟΣ ΑΘΗΝΑΙΩΝ",
+      "abbreviation": null,
+      "latinName": "municipality_of_athens",
+      "status": "active",
+      "category": "MUNICIPALITY",
+      "vatNumber": "090025537",
+      "fekNumber": "1828",
+      "fekIssue": "fektype_B",
+      "fekYear": "2005",
+      "odeManagerEmail": "voctrain@cityofathens.gr",
+      "website": "http://www.cityofathens.gr",
+      "supervisorId": "5002",
+      "supervisorLabel": "ΠΕΡΙΦΕΡΕΙΑ ΑΤΤΙΚΗΣ",
+      "organizationDomains": []
+    }
+  },
+  "signers": {
+    "100089761": {
+      "uid": "100089761",
+      "firstName": "ΙΩΑΝΝΑ",
+      "lastName": "ΜΠΟΤΣΟΛΗ",
+      "active": true,
+      "activeFrom": 1711152000000,
+      "activeUntil": 32503672800030,
+      "organizationId": "6013",
+      "hasOrganizationSignRights": false,
+      "units": [
+        {
+          "uid": "100046471",
+          "positionId": "POS_10040",
+          "positionLabel": "Προϊστάμενος Τμήματος",
+          "activationDate": null,
+          "deactivationDate": null
+        }
+      ]
+    },
+    "126213": {
+      "uid": "126213",
+      "firstName": "ΙΩΑΝΝΗΣ",
+      "lastName": "ΒΑΚΟΥΝΤΟΥΖΗΣ",
+      "active": true,
+      "activeFrom": 1262304000000,
+      "activeUntil": 32503672800776,
+      "organizationId": "6013",
+      "hasOrganizationSignRights": false,
+      "units": [
+        {
+          "uid": "90120",
+          "positionId": "POS_10009",
+          "positionLabel": "Διευθυντής",
+          "activationDate": null,
+          "deactivationDate": null
+        },
+        {
+          "uid": "92817",
+          "positionId": "POS_10138",
+          "positionLabel": "Προϊστάμενος Διεύθυνσης",
+          "activationDate": null,
+          "deactivationDate": null
+        },
+        {
+          "uid": "100025699",
+          "positionId": "POS_10138",
+          "positionLabel": "Προϊστάμενος Διεύθυνσης",
+          "activationDate": null,
+          "deactivationDate": null
+        },
+        {
+          "uid": "93100",
+          "positionId": "POS_10138",
+          "positionLabel": "Προϊστάμενος Διεύθυνσης",
+          "activationDate": null,
+          "deactivationDate": null
+        },
+        {
+          "uid": "100025689",
+          "positionId": "POS_10005",
+          "positionLabel": "Γενικός Διευθυντής",
+          "activationDate": null,
+          "deactivationDate": null
+        },
+        {
+          "uid": "100044986",
+          "positionId": "POS_10005",
+          "positionLabel": "Γενικός Διευθυντής",
+          "activationDate": null,
+          "deactivationDate": null
+        },
+        {
+          "uid": "6013",
+          "positionId": "POS_10003",
+          "positionLabel": "Γενικός Γραμματέας",
+          "activationDate": null,
+          "deactivationDate": null
+        }
+      ]
+    }
   }
 }

@@ -18,7 +18,8 @@ contracts/            Foundry
 verifier/             TypeScript (viem, tsx, vitest)
   src/canonical.ts           canonicalisation spec v1 + keccak256; the part anyone must be able to reproduce
   src/diavgeia.ts            OpenData client (live or fixture); handles the API's 180-day window cap
-  src/chain.ts               deploy, anchor, read back
+  src/chain.ts               deploy, register org signers, anchor, read back
+  src/orgkeys.ts             one derived anchoring key per organisation (Phase 1 stand-in)
   src/report.ts              portal vs chain reconciliation, shared by verify and page
   src/page.ts                static per-municipality HTML page
   src/validate.ts            shape checks on every API record (SPEC §8)
@@ -34,7 +35,7 @@ Needs Foundry (forge, anvil) and Node 22.
 
 ```sh
 cd contracts && forge test                      # 20 passed
-cd ../verifier && npm install && npm test       # 79 passed
+cd ../verifier && npm install && npm test       # 95 passed
 
 anvil &                                         # local chain, default accounts
 export DIAVGEIA_FIXTURE=fixtures/athens-2025-11.json   # omit to hit the live API
@@ -80,7 +81,8 @@ the spec changed and every existing anchor is invalid; bump `CANONICAL_VERSION`.
 
 ## Not done, on purpose
 
-- Signer keys are Anvil accounts mapped to one org VAT. Real key issuance and revocation is section 7 of the plan.
+- Signer keys are derived per organisation from one seed held by the crawler: a stand-in. Real key
+  issuance to the bodies themselves, and revocation, is section 7 of the plan.
 - `MockRail` records a settlement; it does not move euros.
 - The live client has run the whole of Athens 2025 (CONTEXT.md, first live run). The year's recording is
   not committed: 11.7 MB, and it holds payee names of natural persons.

@@ -62,7 +62,7 @@ a crypto audience.
 
 ## What runs today
 
-- 20 Foundry tests, 79 vitest tests, all green.
+- 20 Foundry tests, 95 vitest tests, all green.
 - `deploy / anchor / verify / pay / award / link` against Anvil with fixtures: five real versions across four
   ADAs anchor; verify shows portal = chain = 624,252.09 EUR; tampering one amount by 36 cents is caught with
   exit 2; paying the voided act is refused with `ActVoided()`; linking the paints act against a 20,000 EUR
@@ -94,6 +94,9 @@ a crypto audience.
       wrong or empty on two 2025 acts. Diavgeia's `organizationId` is authoritative. Should the signer's
       authority be checked against the org rather than the typed VAT? Changes the anchor semantics. Default
       kept on 2026-10-11: the typed VAT, so a wrong one stays visible as `unanchorable` rather than hidden.
+      **Reopened 2026-10-12 by Amorgos:** its typed payer is `null` on 647 of 681 versions, so under this
+      default 648 of its 671 acts are unanchorable and its "difference" (7,396,087.80 EUR) only measures
+      that. Needs the owner's decision before any body other than Athens is meaningful.
 - [x] Recordings of live runs are not committed (payee names of natural persons; 11.7 MB for a year). Two
       recordings of Athens 2025 were identical, so `record` rebuilds one in about 4 minutes.
 - [x] Version log `status`: only `PUBLISHED` in all of Athens 2025. Unknown statuses stay a `history-error`.
@@ -113,8 +116,12 @@ a crypto audience.
 2. A per-municipality page: anchored total, portal total, difference. The product of Phase 1 is that one number.
    Built (`cli page`) and checked on fixtures only. Still to do: run it on live data, and pass the registry's
    deployment block to `chainReader` on any chain but Anvil (it scans `Anchored` logs from block 0).
-3. Replace the single-org signer with per-org keys derived from `/signers/{id}.json` (still civic, still a
-   stand-in, but the data model becomes right).
+3. Done 2026-10-12: one derived key per organisation, registered for the VAT in Diavgeia's own
+   `/organizations` record, and every act's signers checked against `/signers` (SPEC §6). Athens and Amorgos
+   anchor on one chain with separate keys. Athens 2025: 4 signers, none with organisation-level signing
+   rights, one of them (a section head) signing 4,028 of 5,515 acts; no signer issues. Amorgos 2025: one
+   signer, without organisation-level rights, signed 670 of 671 acts. Blocked from being useful beyond Athens
+   by the payer-field question above.
 4. Only then: talk to anyone in government.
 
 ## People and references

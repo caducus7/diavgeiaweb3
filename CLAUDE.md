@@ -45,12 +45,18 @@ Unset `DIAVGEIA_FIXTURE` to use the live API at https://diavgeia.gov.gr/opendata
   `HTTPS_PROXY`: run live commands with `NODE_USE_ENV_PROXY=1` (Node >= 22.21), or they fail with
   `fetch failed (ENOTFOUND)` even when curl works. Verified 2026-10-11 once diavgeia.gov.gr was allowlisted.
 - Anvil default account 0 key ends in `...d7bf4f2ff80`. A typo here cost an hour once.
+- Anvil keeps each instance's chain state in `~/.foundry/anvil/tmp` and does not clean it up. A day of year-long
+  runs filled the session's disk allowance (about 30 GB). After `kill $(pgrep -x anvil)`, `rm -rf
+  ~/.foundry/anvil/tmp`. Never `pkill -f` a pattern that appears in your own command line: it kills the shell.
 
 ## Rules
 
 - `forge test` and `npm test` green before any commit. The pinned hash test in `verifier/test/canonical.test.ts`
   is the spec: if it fails, you changed the canonical form. Either revert, or bump `CANONICAL_VERSION`,
   update `docs/SPEC.md`, and say in the commit that all prior anchors are invalidated.
+- `DIAVGEIA_SIGNER_SEED` signs for every organisation: never commit it, never log it. The built-in development
+  seed is public and only accepted against a local RPC. Changing the derivation in `orgkeys.ts` re-keys every
+  organisation; the pinned addresses in `test/orgkeys.test.ts` guard it.
 - Contracts are append-only by design. Never add an overwrite, delete, or admin override of an anchor.
   Admin can only set signers.
 - Amounts are integer cents (`uint128`) on-chain and `bigint` in TS. Never a float past `toCents()`.

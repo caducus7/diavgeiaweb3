@@ -14,7 +14,14 @@ import { isPerActError } from "./validate.js";
 
 export interface CheckLine { what: string; ok: boolean; detail: string }
 
+/** The registry fields the verifier relies on; other fields (names, units) may change without consequence. */
+const ORG_FIELDS = ["uid", "vatNumber"] as const;
+const SIGNER_FIELDS = ["uid", "organizationId", "activeFrom", "activeUntil", "hasOrganizationSignRights"] as const;
+const pick = (o: Record<string, unknown>, ks: readonly string[]) => JSON.stringify(ks.map((k) => o[k]));
+
 export interface FixtureFile {
+  organizations?: Record<string, Record<string, unknown>>;
+  signers?: Record<string, Record<string, unknown>>;
   _query?: { org: string; type: string; from: string; to: string };
   _source?: string;
   /** Set when the fixture holds a hand-picked subset of its query: extra live acts are then expected. */
@@ -85,5 +92,17 @@ export async function liveCheck(client: DiavgeiaClient, fx: FixtureFile, warn = 
     const a = actHash(d), b = actHash(l);
     lines.push({ what: tag, ok: a === b, detail: a === b ? `hash ${a.slice(0, 18)}… matches` : `fixture ${a.slice(0, 18)}… live ${b.slice(0, 18)}…` });
   }
+
+  // Registry records the fixture holds: the fields the verifier uses must still match the live registry.
+  const registry = async (what: string, ks: readonly string[], fixture: Record<string, unknown>, get: () => Promise<unknown>) => {
+    let live: unknown;
+    try { live = await get(); }
+    catch (e) { if (!isPerActError(e)) throw e; lines.push({ what, ok: false, detail: (e as Error).message }); return; }
+    if (!live) { lines.push({ what, ok: false, detail: "not returned by the live API" }); return; }
+    const same = pick(fixture, ks) === pick(live as Record<string, unknown>, ks);
+    lines.push({ what, ok: same, detail: same ? `${ks.slice(1).join(", ")} match` : `fixture ${pick(fixture, ks)} live ${pick(live as Record<string, unknown>, ks)}` });
+  };
+  for (const [uid, o] of Object.entries(fx.organizations ?? {})) await registry(`organization ${uid}`, ORG_FIELDS, o, () => client.organization(uid));
+  for (const [id, s] of Object.entries(fx.signers ?? {})) await registry(`signer ${id}`, SIGNER_FIELDS, s, () => client.signer(id));
   return lines;
 }

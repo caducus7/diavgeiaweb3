@@ -204,6 +204,13 @@ describe("buildReport", () => {
     expect(r.findings.find((x) => x.ada === "9ΓΒΝΩ6Μ-Λ4Η")!.status).toBe("unanchored");
   });
 
+  it("with the VAT from Diavgeia's organisation record, many acts without a payer are findings, not a --vat error (Amorgos 2025)", async () => {
+    const c = clientWith((f) => { for (const d of f.decisions) d.extraFieldValues.org = null; });
+    await expect(buildReport(c, reader(new Map()), P)).rejects.toThrow(/pass --vat/);
+    const r = await buildReport(c, reader(new Map()), { ...P, vatFromRegistry: true });
+    expect(r.counts).toEqual({ unanchorable: 4 });
+  });
+
   it("a one-act window whose act has another payer is a finding, not a --vat error", async () => {
     const c = clientWith((f) => {
       f.decisions = [f.decisions[0]];

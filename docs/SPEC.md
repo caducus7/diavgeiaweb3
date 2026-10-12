@@ -106,6 +106,22 @@ first on-chain. PaymentGate therefore handles single-payee acts only. Multi-paye
 
 ## 6. Verifier behaviour
 
+Signer keys (Phase 1 stand-in, `verifier/src/orgkeys.ts`): one key per Diavgeia organisation,
+`keccak256(seed || "diavgeiaweb3/org-key/v1/" || uid)` (re-hashed with a counter if not a valid secp256k1
+scalar). The seed is `DIAVGEIA_SIGNER_SEED`; a public development seed is used only against a local RPC and
+refused otherwise. Whoever holds the seed signs for every organisation. `deploy` registers no signer. The
+first `anchor`, `award` or `link` for an organisation registers its key with `setSigner(key, vat)`, where
+`vat` is `vatNumber` from `/organizations/{uid}.json`, never the typed payer field. On Anvil the key is
+funded by the admin; elsewhere an unfunded key is an error naming the address. `--vat` is accepted only when
+the source has no organisation record, and must agree with it when there is one.
+
+Signer checks (reported, never a gate: an act with a doubtful signer is still anchored, so later tampering
+with it stays detectable): for each signer of each act's latest version, `/signers/{id}.json` must exist,
+belong to the act's organisation, and be active on the issue day (`activeFrom` to `activeUntil`, compared
+in days; `activeUntil` in the year 3000 means open-ended). Unit membership is not checked: directors sign
+for units below their own (Athens 2025: 1,056 acts). `verify` and `page` list signers by id with act counts
+and whether they hold organisation-level signing rights; names are not shown.
+
 `anchor`: for each ADA in the search window, walk `/versionlog.json`, fetch earlier versions via
 `/decisions/v/{id}.json`, anchor any versions the chain lacks, in order, chaining `prevAnchor`.
 
@@ -170,6 +186,12 @@ Heuristics, flagged as such in code:
   31 March. The client sends `to + 1 day`.
 - `issueDate` is 00:00 UTC on all but one of 5,667 Athens 2025 versions (one at 06:54 UTC).
 - Version log `status` was `PUBLISHED` on every entry of Athens 2025.
+- `/organizations/{uid}.json` has `vatNumber` (9 digits), `label`, `category`, `status`. 6013 is the
+  Municipality of Athens (090025537), 6027 the Municipality of Amorgos (090256954), checked 2026-10-12.
+- `/signers/{id}.json` has `organizationId`, `activeFrom`, `activeUntil`, `hasOrganizationSignRights` and
+  `units[]` (uid, positionLabel), plus names. Open-ended signers have `activeUntil` in the year 3000.
+- The typed payer `extraFieldValues.org` is `null` on 647 of Amorgos' 681 versions in 2025, and the payee
+  VAT is often absent too. Athens fills it on 5,665 of 5,667. Do not assume other bodies type it.
 - Β.2.2 acts carry no KAE or CPV. Those are on the commitment act (Β.2.1) and the KIMDIS award.
 
 ## 8. Ingestion checks (`verifier/src/validate.ts`, `diavgeia.ts`)
@@ -192,5 +214,8 @@ error, never a default.
   (catches an ignored `page` parameter). The live client uses 90-day windows, half the observed 180-day
   clamp, so an off-by-one in the API's convention cannot drop a day.
 - Version log: non-empty, for the requested ADA, and its latest entry is the version search returned.
+- Organisation record: `uid` is the one asked for, `vatNumber` is 9 digits. Signer record: `uid` is the one
+  asked for, `organizationId` a string, `activeFrom`/`activeUntil` integers, `hasOrganizationSignRights` a
+  boolean. A malformed signer record becomes a signer issue, not an abort.
 - HTTP: 404 means absent; 429, 5xx and network errors are retried 3 times with backoff; anything else, and
   a non-JSON body, is an error.
