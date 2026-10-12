@@ -52,17 +52,18 @@ a crypto audience.
 - **1,578 of the 5,480 non-void acts (29%) carry no amount** (payroll orders among them). Both totals are blind to them,
   so the headline number covers payments that state an amount, and the page says so.
 - 61Θ6Ω6Μ-2ΑΗ, 1,397,928.53 EUR, 5th payment for the new Panathinaikos stadium: payer and payee are swapped
-  (payer is the TERNA, AKTOR and METKA consortium, payee is the municipality). The registry cannot anchor it
-  under Athens' key, so it is the whole of the 2025 difference. A data-quality finding at source.
-- 63ΓΕΩ6Μ-ΧΟ1: v3 of 4 is an empty correction (no payer, payee or amount) between two valid versions. The
-  registry refuses v3, so v4 is blocked behind it.
+  (payer is the TERNA, AKTOR and METKA consortium, payee is the municipality). A data-quality finding at
+  source. Under the first rule (typed payer) it could not be anchored and was the whole of the 2025
+  difference; since the payer decision it is anchored under Athens' VAT and listed as a payer note.
+- 63ΓΕΩ6Μ-ΧΟ1: v3 of 4 is an empty correction (no payer, payee or amount) between two valid versions. Under
+  the first rule v3 was refused and v4 blocked behind it; now all four versions anchor.
 - 6Γ5ΛΩ6Μ-ΔΒΡ (April 2025 payroll): voided in v2, un-voided in v3. The registry accepts nothing after a void,
   so the chain keeps it voided while the portal shows it live. 1 of 35 voided acts. Open question below.
 - No multi-payee and no non-EUR acts in 2025. The multi-payee question is not urgent for Athens Β.2.2.
 
 ## What runs today
 
-- 20 Foundry tests, 95 vitest tests, all green.
+- 20 Foundry tests, 99 vitest tests, all green.
 - `deploy / anchor / verify / pay / award / link` against Anvil with fixtures: five real versions across four
   ADAs anchor; verify shows portal = chain = 624,252.09 EUR; tampering one amount by 36 cents is caught with
   exit 2; paying the voided act is refused with `ActVoided()`; linking the paints act against a 20,000 EUR
@@ -118,8 +119,12 @@ a crypto audience.
    `/organizations` record, and every act's signers checked against `/signers` (SPEC §6). Athens and Amorgos
    anchor on one chain with separate keys. Athens 2025: 4 signers, none with organisation-level signing
    rights, one of them (a section head) signing 4,028 of 5,515 acts; no signer issues. Amorgos 2025: one
-   signer, without organisation-level rights, signed 670 of 671 acts. Blocked from being useful beyond Athens
-   by the payer-field question above.
+   signer, without organisation-level rights, signed 670 of 671 acts.
+   Rerun 2026-10-12 with the payer decision (anchors carry the org's VAT), both on one Anvil from the
+   recordings: Athens 2025 anchors 5,666 of 5,667 versions (only the un-voided payroll v3 refused); portal =
+   chain = 236,634,270.09 EUR, difference 0.00; ok 5,479, void 35, chain-behind 1; one act types another
+   payer (the stadium act). Amorgos 2025 anchors all 681 versions; portal = chain = 8,519,519.29 EUR,
+   difference 0.00; ok 671; 639 acts type no payer and one (6ΤΒΕΩΨΡ-ΕΦΑ) types another VAT.
 4. Only then: talk to anyone in government.
 
 ## People and references
