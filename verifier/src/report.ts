@@ -8,7 +8,7 @@
  * the totals understate them.
  */
 import type { Hex } from "viem";
-import { actHash, isVoid, toCents, unixDay, vatToUint, type DiavgeiaDecision } from "./canonical.js";
+import { actHash, isVoid, toCents, unixDay, unsupportedAmount, vatToUint, type DiavgeiaDecision } from "./canonical.js";
 import type { DiavgeiaClient } from "./diavgeia.js";
 import { parseIsoDay, isPerActError, PortalInconsistentError, SignerDataUnavailable, type SignerRecord } from "./validate.js";
 
@@ -27,7 +27,7 @@ export interface ChainReader {
   anchoredAdas(): Promise<string[]>;
 }
 
-export type Status = "ok" | "void" | "unanchored" | "chain-behind" | "mismatch" | "chain-ahead" | "portal-missing" | "history-error" | "foreign-anchor";
+export type Status = "ok" | "void" | "unanchored" | "chain-behind" | "mismatch" | "chain-ahead" | "portal-missing" | "history-error" | "foreign-anchor" | "unsupported";
 
 /** Statuses that mean the portal and the chain disagree about published content. */
 export const ALARM: ReadonlySet<Status> = new Set(["mismatch", "chain-ahead", "portal-missing", "history-error", "foreign-anchor"]);
@@ -105,8 +105,10 @@ export async function versionsOf(client: DiavgeiaClient, latest: DiavgeiaDecisio
  *  Mirrors ActRegistry.anchor's per-version checks; used by `anchor` (to skip with a reason) and by the report
  *  (to say whether a lagging chain is merely behind or blocked), so the two cannot drift. The payer check always
  *  passes: the anchor carries the organisation's VAT (SPEC §4), and versionsOf rejects a version of another org. */
-export function anchorBlocker(last: { voided: boolean } | null): string | null {
+export function anchorBlocker(next: DiavgeiaDecision, last: { voided: boolean } | null): string | null {
   if (last?.voided) return "the registry accepts nothing after a void, and the chain holds this act as voided";
+  const amount = unsupportedAmount(next);
+  if (amount) return `${amount}, which the canonical form cannot hold`;
   return null;
 }
 
@@ -162,11 +164,25 @@ export async function buildReport(client: DiavgeiaClient, chain: ChainReader, p:
     if (sponsors.some((s) => (s.expenseAmount?.currency ?? "EUR") !== "EUR")) nonEur++;
     if (sponsors[0]?.expenseAmount?.amount == null && !isVoid(l.subject)) noAmount++;
 
-    const portalCents = firstAmount(l);
-    const voided = isVoid(l.subject);
-    if (!voided) portalTotal += portalCents;
+    let vs: DiavgeiaDecision[] | null = null, historyError: string | null = null;
+    try { vs = await versionsOf(client, l); }
+    catch (e) {
+      // One act's history is unusable; report it and carry on. Network failures still abort the run.
+      if (!isPerActError(e)) throw e;
+      historyError = e.message;
+    }
+    // An amount the canonical form cannot hold (negative, sub-cent) in some version: that version cannot be
+    // hashed or anchored (SPEC §6). The latest version's amount then counts in neither total.
+    const badAt = (vs ?? [l]).findIndex((v) => unsupportedAmount(v) !== null);
+    const unsupported = badAt < 0 ? null : `${vs ? `v${badAt + 1}` : "the latest version"} has ${unsupportedAmount((vs ?? [l])[badAt])}`;
+
     const onChain = await chain.versions(l.ada);
     const last = onChain.length ? onChain[onChain.length - 1] : null;
+    // Reported as `unsupported` (nothing anchored): in neither total, as the page says. Otherwise the portal
+    // total counts the latest version whenever its own amount can be read.
+    const portalCents = unsupportedAmount(l) || (unsupported && !last && vs) ? null : firstAmount(l);
+    const voided = isVoid(l.subject);
+    if (!voided && portalCents !== null) portalTotal += portalCents;
     const foreign = foreignAnchor(onChain, orgVat);
     // Another organisation's anchor is not this organisation's chain total, as in the portal-missing scan.
     if (last && !last.voided && !foreign) chainTotal += last.amountCents;
@@ -174,17 +190,24 @@ export async function buildReport(client: DiavgeiaClient, chain: ChainReader, p:
     const f = (status: Status, detail: string) =>
       findings.push({ ada: l.ada, status, detail, portalCents, chainCents: last ? last.amountCents : null });
 
-    let vs: DiavgeiaDecision[];
-    try { vs = await versionsOf(client, l); }
-    catch (e) {
-      // One act's history is unusable; report it and carry on. Network failures still abort the run.
-      if (!isPerActError(e)) throw e;
-      f("history-error", e.message);
+    if (!vs) { f("history-error", historyError!); continue; }
+    if (!last) {
+      f(unsupported ? "unsupported" : "unanchored", unsupported
+        ? `${unsupported}, which the canonical form cannot hold; not anchored, and its amount is in neither total`
+        : `portal has ${vs.length} version(s), chain has none`);
       continue;
     }
-
-    if (!last) { f("unanchored", `portal has ${vs.length} version(s), chain has none`); continue; }
     if (foreign) { f("foreign-anchor", foreign); continue; }
+    // Never let an unsupported amount hide tampering: a version the chain holds that the portal now shows with
+    // an unhashable amount has changed since it was anchored.
+    if (unsupported && badAt < onChain.length) {
+      f("mismatch", `version ${badAt + 1} is on chain, but the portal's ${unsupported.slice(unsupported.indexOf(" has ") + 1)}`);
+      continue;
+    }
+    if (unsupported) {
+      f("chain-behind", `chain has ${onChain.length} of ${vs.length} portal versions; ${unsupported}, which cannot be anchored, so it and every later version are blocked`);
+      continue;
+    }
 
     // Compare position by position. The chain may lag the portal (a version not
     // yet anchored) but must never disagree with it on a version both hold.
@@ -199,7 +222,7 @@ export async function buildReport(client: DiavgeiaClient, chain: ChainReader, p:
     }
     if (onChain.length > vs.length) { f("chain-ahead", `chain has ${onChain.length} versions, portal shows ${vs.length}`); continue; }
     if (onChain.length < vs.length) {
-      const why = anchorBlocker(last);
+      const why = anchorBlocker(vs[onChain.length], last);
       f("chain-behind", why
         ? `chain has ${onChain.length} of ${vs.length} portal versions; v${onChain.length + 1} is blocked (${why}), and every later version with it`
         : `chain has ${onChain.length} of ${vs.length} portal versions; the rest are not anchored yet`);
@@ -210,12 +233,27 @@ export async function buildReport(client: DiavgeiaClient, chain: ChainReader, p:
 
   // Anchored acts for this org and window that the portal no longer returns.
   // Without this a deletion from the portal would be invisible.
+  // The anchor holds the UTC day; the window is in Athens days, which are the same day or the next (an act
+  // stored at Athens midnight, 21:00 or 22:00 UTC). So UTC days fromDay..toDay-1 are inside the window, while
+  // fromDay-1 and toDay are each either inside or on the neighbouring day: for those, the act is missing only
+  // if the portal does not return it on that neighbouring day either.
   const seen = new Set(latest.map((l) => l.ada.normalize("NFC")));
+  const neighbour = new Map<number, Promise<Set<string>>>();
+  const onNeighbour = async (day: number, ada: string): Promise<boolean> => {
+    if (!neighbour.has(day)) {
+      const iso = new Date(day * 86_400_000).toISOString().slice(0, 10);
+      neighbour.set(day, client.search({ org: p.org, type: p.type, fromIssueDate: iso, toIssueDate: iso })
+        .then((ds) => new Set(ds.map((d) => d.ada.normalize("NFC")))));
+    }
+    return (await neighbour.get(day)!).has(ada.normalize("NFC"));
+  };
   for (const ada of await chain.anchoredAdas()) {
     if (seen.has(ada.normalize("NFC"))) continue;
     const onChain = await chain.versions(ada);
     const last = onChain[onChain.length - 1];
-    if (!last || last.payerVat !== orgVat || last.issueDate < fromDay || last.issueDate > toDay) continue;
+    if (!last || last.payerVat !== orgVat || last.issueDate < fromDay - 1 || last.issueDate > toDay) continue;
+    if (last.issueDate === fromDay - 1 && await onNeighbour(fromDay - 1, ada)) continue;
+    if (last.issueDate === toDay && await onNeighbour(toDay + 1, ada)) continue;
     if (!last.voided) chainTotal += last.amountCents;
     findings.push({ ada, status: "portal-missing", detail: `anchored (${onChain.length} version(s)) but not returned by the portal`, portalCents: null, chainCents: last.amountCents });
   }

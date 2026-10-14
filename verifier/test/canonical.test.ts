@@ -18,7 +18,13 @@ describe("toCents", () => {
     expect(toCents(1860.0)).toBe(186000n);
     expect(toCents(595771.73)).toBe(59577173n);
     expect(toCents(3018.2)).toBe(301820n);
-    expect(toCents(0.1 + 0.2)).toBe(30n);
+  });
+
+  it("refuses amounts the canonical form cannot hold rather than rounding them (SPEC §2; seen live in 2025)", () => {
+    expect(() => toCents(0.1 + 0.2)).toThrow(/more than two decimals/);
+    expect(() => toCents(5.68434e-14)).toThrow(/more than two decimals/); // Heraklion: a float residue for 0.00
+    expect(() => toCents(-1267.94)).toThrow(/negative/); // Thessaloniki: a credit line
+    expect(() => toCents(-0.01)).toThrow(/negative/); // Patras
   });
 });
 

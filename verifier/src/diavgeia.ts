@@ -12,7 +12,7 @@
 import { readFileSync } from "node:fs";
 import type { DiavgeiaDecision } from "./canonical.js";
 import {
-  parseDecision, parseSearchPage, parseVersionLog, parseIsoDay, parseOrganization, parseSigner, PortalInconsistentError,
+  parseDecision, parseSearchPage, parseVersionLog, parseIsoDay, athensDay, parseOrganization, parseSigner, PortalInconsistentError,
   SignerDataUnavailable, type OrganizationRecord, type SignerRecord,
 } from "./validate.js";
 
@@ -175,9 +175,10 @@ export class LiveClient implements DiavgeiaClient {
 export function outsideQuery(d: DiavgeiaDecision, p: SearchParams, from: string, to: string): string | null {
   if (d.organizationId !== p.org) return `asked for org ${p.org}, got ${d.ada} of org ${d.organizationId}`;
   if (d.decisionTypeId.normalize("NFC") !== p.type.normalize("NFC")) return `asked for type ${p.type}, got ${d.ada} of type ${d.decisionTypeId}`;
-  const lo = parseIsoDay(from, "from"), hi = parseIsoDay(to, "to") + DAY;
-  if (d.issueDate < lo || d.issueDate >= hi)
-    return `asked for ${from}..${to} (UTC days), got ${d.ada} issued ${new Date(d.issueDate).toISOString()}; if this is Athens midnight, the API's date convention differs from the one assumed`;
+  parseIsoDay(from, "from"); parseIsoDay(to, "to");
+  const day = athensDay(d.issueDate);
+  if (day < from || day > to)
+    return `asked for ${from}..${to} (Athens days), got ${d.ada} issued ${new Date(d.issueDate).toISOString()} (Athens day ${day}); the API's date convention differs from the one assumed`;
   return null;
 }
 

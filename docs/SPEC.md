@@ -44,8 +44,10 @@ Serialisation: JSON, keys sorted lexicographically by UTF-16 code unit at every 
 strings escaped per RFC 8259 as `JSON.stringify` does. Hash: keccak256 over the UTF-8 bytes.
 
 `toCents(x)`: `x.toFixed(2)` split on `.`; `whole * 100 + frac`. Defined for the floats the API emits
-(two decimal places). Any amount with more than two decimals is a spec violation and must be rejected, not
-rounded.
+(two decimal places). Any amount that is negative, above 1e12, or has more than two decimals is outside the
+canonical form and must be rejected, not rounded: `toCents` throws, so such a version is never hashed. The
+verifier scopes that rejection to its act (§6, `unsupported`). Seen live in 2025: credit lines (negative) and
+a float residue for 0.00 (5.68434e-14).
 
 Pinned test vector: ADA 9ΓΒΝΩ6Μ-Λ4Η, versionId 0ad4da70-6ebc-4c46-b82a-f61143cd56a7 hashes to
 `0xce473bfba3290809b737ace729a0000ad6166df0a6a8d400a4c66f6832ad4b8d`.
@@ -148,11 +150,18 @@ anchored or blocked after a void), `foreign-anchor` (a version on chain carries 
 organisation's, §4; not counted in the chain total), `history-error`
 (the portal contradicts itself about this act's history: the version log does not end with the version search
 returned, a version record is for a different version, ADA or organisation, or the log or an earlier
-version fails the shape checks of §8). A search record that fails §8 is not scoped to its act: it aborts the run, because the totals
-cannot be computed honestly without it.
+version fails the shape checks of §8), `unsupported` (nothing anchored, and some version has an amount the
+canonical form cannot hold, §2; not anchored, its amount in neither total, not an alarm). A search record
+that fails §8 is not scoped to its act: it aborts the run, because the totals cannot be computed honestly
+without it. An unsupported amount is not a §8 failure. It never hides tampering: when the chain already
+holds the version that now carries it, the act is a `mismatch`; when it comes after the anchored versions,
+`chain-behind` (blocked).
 Then, for every ADA in the registry's `Anchored` logs whose latest anchor has the org's `payerVat` and an
 `issueDate` inside the window but which the portal did not return: `portal-missing`. Its amount counts in
-the chain total.
+the chain total. The anchor holds the UTC day and the window is in Athens days, the same day or the next,
+so UTC days `from..to-1` are inside; `from-1` and `to` are each inside or on the neighbouring day, and such an
+anchor is `portal-missing` only if a one-day search of that neighbouring day does not return it either. On a
+recording, the neighbouring days are whatever the recording holds.
 Prints portal and chain non-void totals and their difference. Exit 2 if any `mismatch`, `foreign-anchor`,
 `chain-ahead`, `portal-missing` or `history-error` (also with `--json`). A `history-error` is scoped to its act: the run
 carries on. A network or HTTP failure aborts the run (exit 1) rather than producing partial totals.
@@ -176,8 +185,8 @@ shows ADAs, statuses and amounts only; subjects and payee names are left out. It
 (live or fixture) and the caveats on the totals. Same exit code as `verify`.
 
 `anchor` skips an act whose history is a `history-error` (exit 2). It checks each version before sending it,
-with the same rule the report uses (`anchorBlocker`): any version after a void is not sent, and neither is
-anything after it; earlier versions of that act are still
+with the same rule the report uses (`anchorBlocker`): any version after a void, or with an amount the
+canonical form cannot hold, is not sent, and neither is anything after it; earlier versions of that act are still
 anchored. These registry refusals are logged and exit 0, since they are permanent facts about the data that
 `verify` reports. Any other revert is logged per act; an RPC failure aborts.
 
@@ -210,7 +219,10 @@ Heuristics, flagged as such in code:
   `issueDate:[DT(from 00:00 Athens) TO DT(to 00:00 Athens)]` while `issueDate` is stored at 00:00 UTC, so acts
   issued on `to` fall outside: 2025-03-31..2025-03-31 returns 0 acts, 2025-03-31..2025-04-01 returns the 25 of
   31 March. The client sends `to + 1 day`.
-- `issueDate` is 00:00 UTC on all but one of 5,667 Athens 2025 versions (one at 06:54 UTC).
+- `issueDate` is 00:00 UTC on all but one of 5,667 Athens 2025 versions (one at 06:54 UTC). Piraeus 2025
+  stores some at Athens midnight (21:00 or 22:00 UTC the day before), which the API returns for the Athens
+  day. The window check therefore uses the Athens day (§8). The canonical `issueDay` and the anchor's
+  `issueDate` stay `floor(ms / 86400000)`, the UTC day, which for such acts is the day before.
 - Version log `status` was `PUBLISHED` on every entry of Athens 2025.
 - `/organizations/{uid}.json` has `vatNumber` (9 digits), `label`, `category`, `status`. 6013 is the
   Municipality of Athens (090025537), 6027 the Municipality of Amorgos (090256954), checked 2026-10-12.
@@ -230,12 +242,15 @@ error, never a default.
   or missing or null (hashed as `[]`);
   `correctedVersionId`, `protocolNumber`, org and payee strings or null.
 - `ada` at most 32 UTF-8 bytes (it must fit `adaKey`).
-- Amounts: finite, non-negative, at most 1e12 EUR, and at most two decimals (§2: rejected, not rounded).
-  The cap matters: above about 7e13 adjacent doubles are more than a cent apart and the two-decimal test
-  stops being exact. Tested by sampling the whole range up to the cap.
+- Amounts: a finite number or absent; anything else is malformed and aborts. A well-formed amount the
+  canonical form cannot hold (negative, above 1e12 EUR, more than two decimals; §2) is not a shape error: its
+  act is reported as `unsupported` (§6) and the run carries on. The cap matters: above about 7e13 adjacent
+  doubles are more than a cent apart and the two-decimal test stops being exact. Tested by sampling the whole
+  range up to the cap.
 - Search: `info.actualSize` equals the number of decisions; every act has the requested `org` and `type`
-  (NFC) and an `issueDate` inside the requested window, in UTC days. FixtureClient filters with the same
-  function (`outsideQuery`), so a recorded run replays to the same acts.
+  (NFC) and an `issueDate` whose Athens calendar day is inside the requested window, as the API runs it
+  (§7). FixtureClient filters with the same function (`outsideQuery`), so a recorded run replays to the same
+  acts.
 - Paging is counted per window. A window whose distinct versions do not equal its `info.total` is an error
   (catches an ignored `page` parameter). The live client uses 90-day windows, half the observed 180-day
   clamp, so an off-by-one in the API's convention cannot drop a day.

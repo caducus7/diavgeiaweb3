@@ -55,8 +55,39 @@ export interface CanonicalAct {
 
 const nfc = (s: string | null | undefined): string => (s ?? "").normalize("NFC");
 
+/** Above about 2^46 (7e13) EUR adjacent doubles are more than a cent apart, so the two-decimal check below
+ *  stops being exact. 1e12 EUR is far above any public act and well inside the exact range. */
+export const MAX_AMOUNT = 1e12;
+
+/** Why the canonical form cannot represent this amount, or null (SPEC §2: rejected, never rounded). Seen live
+ *  in 2025: credit lines (Thessaloniki -1,267.94, Larissa -63.88, Patras -0.01) and a float residue where
+ *  0.00 was meant (Heraklion 5.68434e-14). A JSON number written with at most two decimals parses to the
+ *  same double as its own toFixed(2), so the decimals comparison is exact for API input. */
+export function amountProblem(v: number): string | null {
+  if (v < 0) return `negative amount ${v}`;
+  if (v > MAX_AMOUNT) return `amount ${v} above ${MAX_AMOUNT}; refusing rather than risking inexact cents`;
+  if (Number(v.toFixed(2)) !== v) return `amount ${v} has more than two decimals (SPEC §2)`;
+  return null;
+}
+
+export class UnsupportedAmountError extends Error {}
+
+/** Why this record cannot be hashed or anchored because of an amount, or null. Scoped to its act (SPEC §6). */
+export function unsupportedAmount(d: DiavgeiaDecision): string | null {
+  const sponsors = d.extraFieldValues?.sponsor ?? [];
+  for (let i = 0; i < sponsors.length; i++) {
+    const v = sponsors[i]?.expenseAmount?.amount;
+    const why = v === undefined || v === null ? null : amountProblem(v);
+    if (why) return `payee ${i + 1}: ${why}`;
+  }
+  return null;
+}
+
 export function toCents(amount: number | undefined | null): bigint {
   if (amount === undefined || amount === null) return 0n;
+  // Never a garbage hash or a rounded total: toFixed would turn 5.68e-14 into 0 and -1267.94 into -126606.
+  const why = amountProblem(amount);
+  if (why) throw new UnsupportedAmountError(why);
   // Avoid float drift: 25462.16 -> "25462.16" -> 2546216
   const s = amount.toFixed(2);
   const [whole, frac = "00"] = s.split(".");

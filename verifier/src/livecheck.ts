@@ -7,7 +7,7 @@
  *  - A reconstructed record (`_reconstructed: true`) is expected to be at risk; a difference there says
  *    the reconstruction was wrong, and the fixture should take the live record instead.
  */
-import { actHash, type DiavgeiaDecision } from "./canonical.js";
+import { actHash, unsupportedAmount, type DiavgeiaDecision } from "./canonical.js";
 import type { DiavgeiaClient } from "./diavgeia.js";
 import { versionsOf } from "./report.js";
 import { isPerActError } from "./validate.js";
@@ -89,6 +89,8 @@ export async function liveCheck(client: DiavgeiaClient, fx: FixtureFile, warn = 
       continue;
     }
     if (!l) { lines.push({ what: tag, ok: false, detail: "version not returned by the live API" }); continue; }
+    const unhashable = unsupportedAmount(d) ?? unsupportedAmount(l);
+    if (unhashable) { lines.push({ what: tag, ok: false, detail: `cannot hash (${unhashable}); compare by hand` }); continue; }
     const a = actHash(d), b = actHash(l);
     lines.push({ what: tag, ok: a === b, detail: a === b ? `hash ${a.slice(0, 18)}… matches` : `fixture ${a.slice(0, 18)}… live ${b.slice(0, 18)}…` });
   }

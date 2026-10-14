@@ -203,6 +203,66 @@ describe("buildReport", () => {
     expect(r.findings.find((x) => x.ada === "ΨΟΣΝΩ6Μ-Θ6Ε")!.detail).toMatch(/is of ADA 9ΓΒΝΩ6Μ-Λ4Η/);
   });
 
+  it("an act with a negative amount and nothing anchored is unsupported: reported, in neither total, no alarm (Thessaloniki 2025)", async () => {
+    const c = clientWith((f) => { f.decisions[0].extraFieldValues.sponsor.push({ ...f.decisions[0].extraFieldValues.sponsor[0], expenseAmount: { amount: -1267.94, currency: "EUR" } }); });
+    const chain = await fullyAnchored(new FixtureClient(FIXTURE));
+    chain.delete("9ΓΒΝΩ6Μ-Λ4Η");
+    const r = await buildReport(c, reader(chain), P);
+    const f = r.findings.find((x) => x.ada === "9ΓΒΝΩ6Μ-Λ4Η")!;
+    expect(f.status).toBe("unsupported");
+    expect(f.detail).toMatch(/v1 has payee 2: negative amount -1267.94/);
+    expect(f.portalCents).toBeNull();
+    expect(r.difference).toBe(0n);
+    expect(r.alarm).toBe(false);
+  });
+
+  it("an earlier unsupported version keeps the whole act out of both totals while nothing is anchored", async () => {
+    const c = clientWith((f) => {
+      const v1 = f.decisions[0];
+      const v2 = { ...JSON.parse(JSON.stringify(v1)), versionId: "fixed-2", correctedVersionId: v1.versionId };
+      v1.extraFieldValues.sponsor[0].expenseAmount.amount = 5.68434e-14; // Heraklion 2025
+      f.decisions.push(v2);
+      f.versionlog[v1.ada] = { ada: v1.ada, versions: [
+        { versionId: v1.versionId, versionTimestamp: 1, correctedVersionId: null, status: "PUBLISHED" },
+        { versionId: "fixed-2", versionTimestamp: 2, correctedVersionId: v1.versionId, status: "PUBLISHED" }] };
+    });
+    const r = await buildReport(c, reader(new Map()), P);
+    const f = r.findings.find((x) => x.ada === "9ΓΒΝΩ6Μ-Λ4Η")!;
+    expect(f.status).toBe("unsupported");
+    expect(f.detail).toMatch(/^v1 has payee 1: amount 5.68434e-14 has more than two decimals/);
+    expect(r.portalTotal).toBe(62425209n - 2546216n);
+  });
+
+  it("an unsupported amount never hides tampering: an anchored version the portal now shows negative is a mismatch", async () => {
+    const chain = await fullyAnchored(new FixtureClient(FIXTURE));
+    const c = clientWith((f) => { f.decisions[0].extraFieldValues.sponsor[0].expenseAmount.amount = -25462.16; });
+    const r = await buildReport(c, reader(chain), P);
+    const f = r.findings.find((x) => x.ada === "9ΓΒΝΩ6Μ-Λ4Η")!;
+    expect(f.status).toBe("mismatch");
+    expect(f.detail).toMatch(/version 1 is on chain, but the portal's has payee 1: negative amount/);
+    expect(r.alarm).toBe(true);
+    expect(r.difference).toBe(-2546216n); // the chain still counts what was anchored
+  });
+
+  it("portal-missing at the window's edges reads the anchor's UTC day as either Athens day (Piraeus 2025 stores Athens midnight)", async () => {
+    const day = (iso: string) => unixDay(Date.parse(iso));
+    const c = clientWith((f) => {
+      const at = (ada: string, iso: string) => ({ ...JSON.parse(JSON.stringify(f.decisions[0])), ada, versionId: `${ada}-v1`, issueDate: Date.parse(iso) });
+      f.decisions.push(at("NEXT-1", "2025-11-30T22:00:00Z")); // Athens 1 December: outside, but on the portal
+      f.decisions.push(at("PREV-1", "2025-11-23T00:00:00Z")); // Athens 23 November: outside, but on the portal
+    });
+    const chain = await fullyAnchored(new FixtureClient(FIXTURE));
+    const base = anchorOf(fx.decisions[0]);
+    chain.set("NEXT-1", [{ ...base, issueDate: day("2025-11-30") }]);
+    chain.set("PREV-1", [{ ...base, issueDate: day("2025-11-23") }]);
+    chain.set("GONE-END", [{ ...base, issueDate: day("2025-11-30") }]);   // gone from the portal entirely
+    chain.set("GONE-START", [{ ...base, issueDate: day("2025-11-23") }]); // could be an Athens-midnight act of the 24th
+    chain.set("FAR-1", [{ ...base, issueDate: day("2025-11-22") }]);      // outside on either reading
+    const r = await buildReport(c, reader(chain), P);
+    const missing = r.findings.filter((x) => x.status === "portal-missing").map((x) => x.ada).sort();
+    expect(missing).toEqual(["GONE-END", "GONE-START"]);
+  });
+
   it("an earlier version of another organisation is a history-error, since the anchor would claim it for this org", async () => {
     const c = clientWith((f) => {
       for (const d of f.decisions) if (d.versionId !== "87e590cb-ac02-421b-97e3-3386b2d16fd6" && d.ada === "ΨΟΣΝΩ6Μ-Θ6Ε") d.organizationId = "6027";

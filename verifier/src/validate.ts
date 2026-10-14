@@ -7,7 +7,7 @@
  * checked. Extra fields pass through untouched so the hash sees the record as
  * the API sent it.
  */
-import type { DiavgeiaDecision } from "./canonical.js";
+import { amountProblem, MAX_AMOUNT, type DiavgeiaDecision } from "./canonical.js";
 import type { VersionLog } from "./diavgeia.js";
 
 export class DiavgeiaShapeError extends Error {
@@ -58,19 +58,20 @@ function int(o: Obj, k: string, where: string): number {
 const describe = (v: unknown): string =>
   v === null ? "null" : Array.isArray(v) ? "array" : typeof v === "string" ? `string ${JSON.stringify(v.slice(0, 40))}` : `${typeof v} ${String(v).slice(0, 40)}`;
 
-/** Above about 2^46 (7e13) EUR adjacent doubles are more than a cent apart, so the two-decimal check below
- *  stops being exact. 1e12 EUR is far above any public act and well inside the exact range. */
-export const MAX_AMOUNT = 1e12;
+export { MAX_AMOUNT };
 
-/** SPEC §2: an amount with more than two decimals is rejected, not rounded.
- *  A JSON number written with at most two decimals parses to the same double as
- *  its own toFixed(2), so this comparison is exact for API input. */
-export function checkAmount(v: unknown, where: string): void {
+/** The amount's type: anything but a finite number (or absent) is malformed and aborts like any shape error. */
+function checkAmountType(v: unknown, where: string): void {
   if (v === undefined || v === null) return; // canonical form treats a missing amount as 0
   if (typeof v !== "number" || !Number.isFinite(v)) throw new DiavgeiaShapeError(where, `expected a finite number, got ${describe(v)}`);
-  if (v < 0) throw new DiavgeiaShapeError(where, `negative amount ${v}`);
-  if (v > MAX_AMOUNT) throw new DiavgeiaShapeError(where, `amount ${v} above ${MAX_AMOUNT}; refusing rather than risking inexact cents`);
-  if (Number(v.toFixed(2)) !== v) throw new DiavgeiaShapeError(where, `amount ${v} has more than two decimals (SPEC §2)`);
+}
+
+/** Type and value. Parsing checks only the type: a well-formed amount the canonical form cannot represent
+ *  (negative, sub-cent) is an `unsupported` act in the report, not a reason to drop the whole window. */
+export function checkAmount(v: unknown, where: string): void {
+  checkAmountType(v, where);
+  const why = typeof v === "number" ? amountProblem(v) : null;
+  if (why) throw new DiavgeiaShapeError(where, why);
 }
 
 /** Validate one decision record; returns it unchanged. */
@@ -109,7 +110,7 @@ export function parseDecision(x: unknown, where = "decision"): DiavgeiaDecision 
         }
         if (s.expenseAmount !== undefined && s.expenseAmount !== null) {
           if (!isObj(s.expenseAmount)) throw new DiavgeiaShapeError(`${sw}.expenseAmount`, "expected object");
-          checkAmount(s.expenseAmount.amount, `${sw}.expenseAmount.amount`);
+          checkAmountType(s.expenseAmount.amount, `${sw}.expenseAmount.amount`);
           optStr(s.expenseAmount, "currency", `${sw}.expenseAmount`);
         }
       });
@@ -151,6 +152,11 @@ export function parseIsoDay(s: string, name: string): number {
   if (Number.isNaN(ms) || new Date(ms).toISOString().slice(0, 10) !== s) throw new Error(`${name} must be a date as YYYY-MM-DD, got ${JSON.stringify(s)}`);
   return ms;
 }
+
+const ATHENS_DAY = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Athens", year: "numeric", month: "2-digit", day: "2-digit" });
+/** The Athens calendar day of an instant, as YYYY-MM-DD. The search API windows by Athens day (SPEC §7); most
+ *  bodies store issueDate at 00:00 UTC (the same Athens day), some at Athens midnight (Piraeus 2025). */
+export const athensDay = (ms: number): string => ATHENS_DAY.format(new Date(ms));
 
 /** The fields of `/organizations/{uid}.json` the verifier uses. */
 export interface OrganizationRecord { uid: string; label: string; vatNumber: string; [k: string]: unknown }

@@ -114,7 +114,7 @@ async function cmdAnchor() {
     for (let i = onChain.length; i < vs.length; i++) {
       const d = vs[i];
       // The registry's own refusals, checked per version so earlier good versions still go on chain.
-      const why = anchorBlocker(lastVoided === null ? null : { voided: lastVoided });
+      const why = anchorBlocker(d, lastVoided === null ? null : { voided: lastVoided });
       if (why) {
         refused++;
         console.warn(`  ! not anchored ${d.ada} v${i + 1}${i + 1 < vs.length ? ` (and ${vs.length - i - 1} later)` : ""}: ${why}`);

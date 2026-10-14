@@ -31,9 +31,10 @@ const LABEL: Record<Status, string> = {
   "portal-missing": "anchored, gone from portal",
   "history-error": "portal contradicts itself",
   "foreign-anchor": "anchored by another organisation",
+  unsupported: "amount the anchor cannot hold",
 };
 
-const ORDER: Status[] = ["mismatch", "foreign-anchor", "chain-ahead", "portal-missing", "history-error", "chain-behind", "unanchored", "void", "ok"];
+const ORDER: Status[] = ["mismatch", "foreign-anchor", "chain-ahead", "portal-missing", "history-error", "unsupported", "chain-behind", "unanchored", "void", "ok"];
 
 const cents = (c: bigint | null) => (c === null ? "&ndash;" : esc(formatEur(c)));
 
@@ -60,6 +61,7 @@ export function renderPage(r: Report, m: PageMeta): string {
     "Totals count the first payee of each act only, matching what the on-chain anchor exposes."
       + (r.multiPayee ? ` <strong>${r.multiPayee} act(s) in this window have more than one payee and are understated.</strong>` : ""),
     r.nonEur ? `<strong>${r.nonEur} act(s) carry a non-EUR amount and are summed as if EUR.</strong>` : "",
+    r.counts.unsupported ? `<strong>${r.counts.unsupported} act(s) carry a negative or sub-cent amount</strong> (a credit line, or a rounding residue), which the canonical form cannot represent. They are not anchored and their amounts are in neither total.` : "",
     r.noAmount ? `${r.noAmount} act(s) carry no amount at all (payroll orders, for one) and are invisible in both totals.` : "",
     "Voided acts are excluded from both totals. Voiding is detected from the subject text (Diavgeia has no void flag), so a void can be missed.",
     `Every anchor carries this organisation's VAT (${p.vatFromRegistry ? "from Diavgeia's organisation record" : "given by the operator: this data source has no organisation record"}), not the payer typed into the act, which is often empty or wrong. The typed payer is still part of the anchored hash, so it cannot change unnoticed either.`,
@@ -85,7 +87,7 @@ h1 { font-size:1.4rem; margin:0 0 4px; } .sub { color:var(--mute); margin:0 0 24
 .scroll { overflow-x:auto; } table { border-collapse:collapse; width:100%; font-size:.9rem; }
 th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; } td.n { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
 tr.s-mismatch td:nth-child(2), tr.s-foreign-anchor td:nth-child(2), tr.s-chain-ahead td:nth-child(2), tr.s-portal-missing td:nth-child(2), tr.s-history-error td:nth-child(2) { color:var(--bad); font-weight:600; }
-tr.s-chain-behind td:nth-child(2), tr.s-unanchored td:nth-child(2) { color:var(--warn); }
+tr.s-chain-behind td:nth-child(2), tr.s-unanchored td:nth-child(2), tr.s-unsupported td:nth-child(2) { color:var(--warn); }
 a { color:inherit; } ul { color:var(--mute); padding-left:20px; } footer { color:var(--mute); font-size:.8rem; margin-top:24px; word-break:break-all; }
 </style>
 </head>

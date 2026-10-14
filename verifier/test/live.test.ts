@@ -371,17 +371,21 @@ describe("code review fixes", () => {
     expect(lines.filter((l) => l.ok).length).toBeGreaterThanOrEqual(4);
   });
 
-  it("#6 the live window check is as strict as fixture replay (Athens-midnight dates are reported, not absorbed)", async () => {
-    const athensMidnight = { ...paints, ada: "TZ-1", versionId: "tz-1", issueDate: Date.parse("2025-11-23T22:00:00Z") };
-    const { f: base } = mockApi(fx.decisions, fx.versionlog);
-    const f = (async (u: URL) => {
-      const r = await base(u);
-      if (!String(u).includes("search.json")) return r;
-      const b = await r.json(); b.decisions.push(athensMidnight); b.info.total++; b.info.actualSize++;
-      return json(b);
-    }) as unknown as typeof fetch;
-    await expect(live(f).search({ org: "6013", type: "Β.2.2", fromIssueDate: "2025-11-24", toIssueDate: "2025-11-30" }))
-      .rejects.toThrow(/TZ-1 issued 2025-11-23T22:00:00.000Z; if this is Athens midnight/);
+  it("#6 the window check is by Athens day: an act stored at Athens midnight (Piraeus 2025) is inside, one a day earlier is not", async () => {
+    const withExtra = (issueDate: string) => {
+      const extra = { ...paints, ada: "TZ-1", versionId: "tz-1", issueDate: Date.parse(issueDate) };
+      const { f: base } = mockApi(fx.decisions, fx.versionlog);
+      return (async (u: URL) => {
+        const r = await base(u);
+        if (!String(u).includes("search.json")) return r;
+        const b = await r.json(); b.decisions.push(extra); b.info.total++; b.info.actualSize++;
+        return json(b);
+      }) as unknown as typeof fetch;
+    };
+    const q = { org: "6013", type: "Β.2.2", fromIssueDate: "2025-11-24", toIssueDate: "2025-11-30" };
+    // 22:00 UTC on 23 November is 00:00 on 24 November in Athens (winter time)
+    expect((await live(withExtra("2025-11-23T22:00:00Z")).search(q)).map((d) => d.ada)).toContain("TZ-1");
+    await expect(live(withExtra("2025-11-22T22:00:00Z")).search(q)).rejects.toThrow(/TZ-1 issued 2025-11-22T22:00:00.000Z \(Athens day 2025-11-23\)/);
   });
 
   it("#7 org: null is accepted, as the canonical form already handles it", () => {
