@@ -239,9 +239,55 @@ describe("buildReport", () => {
     const r = await buildReport(c, reader(chain), P);
     const f = r.findings.find((x) => x.ada === "9ΓΒΝΩ6Μ-Λ4Η")!;
     expect(f.status).toBe("mismatch");
-    expect(f.detail).toMatch(/version 1 is on chain, but the portal's has payee 1: negative amount/);
+    expect(f.detail).toMatch(/version 1 is on chain, but the portal's now has payee 1: negative amount/);
     expect(r.alarm).toBe(true);
     expect(r.difference).toBe(-2546216n); // the chain still counts what was anchored
+  });
+
+  it("a later unsupported version cannot hide an edit to an anchored one (review 2026-10-14)", async () => {
+    const chain = await fullyAnchored(new FixtureClient(FIXTURE));
+    chain.set("ΨΟΣΝΩ6Μ-Θ6Ε", chain.get("ΨΟΣΝΩ6Μ-Θ6Ε")!.slice(0, 1)); // chain holds v1 only
+    const c = clientWith((f) => {
+      for (const d of f.decisions) if (d.ada === "ΨΟΣΝΩ6Μ-Θ6Ε") {
+        if (d.versionId === "87e590cb-ac02-421b-97e3-3386b2d16fd6") d.extraFieldValues.sponsor[0].expenseAmount.amount = -0.01; // v2
+        else d.extraFieldValues.sponsor[0].expenseAmount.amount = 99999.99; // v1, edited after anchoring
+      }
+    });
+    const r = await buildReport(c, reader(chain), P);
+    const f = r.findings.find((x) => x.ada === "ΨΟΣΝΩ6Μ-Θ6Ε")!;
+    expect(f.status).toBe("mismatch");
+    expect(f.detail).toMatch(/^version 1 on chain/);
+    expect(r.alarm).toBe(true);
+  });
+
+  it("an anchored act moved to the neighbouring day is portal-missing, not skipped (review 2026-10-14)", async () => {
+    const c = clientWith((f) => {
+      const moved = { ...JSON.parse(JSON.stringify(f.decisions[0])), ada: "MOVED-1", versionId: "MOVED-1-v1", issueDate: Date.parse("2025-12-01T00:00:00Z") };
+      moved.extraFieldValues.sponsor[0].expenseAmount.amount = 1;
+      f.decisions.push(moved);
+    });
+    const chain = await fullyAnchored(new FixtureClient(FIXTURE));
+    chain.set("MOVED-1", [{ ...anchorOf(fx.decisions[0]), issueDate: unixDay(Date.parse("2025-11-30")) }]);
+    const r = await buildReport(c, reader(chain), P);
+    expect(r.findings.find((x) => x.ada === "MOVED-1")?.status).toBe("portal-missing");
+    expect(r.alarm).toBe(true);
+  });
+
+  it("the multi-payee sum leaves out an act reported unsupported", async () => {
+    const c = clientWith((f) => {
+      const v1 = f.decisions[0];
+      const v2 = { ...JSON.parse(JSON.stringify(v1)), versionId: "two-lines-2", correctedVersionId: v1.versionId };
+      v2.extraFieldValues.sponsor.push({ ...v2.extraFieldValues.sponsor[0], expenseAmount: { amount: 50, currency: "EUR" } });
+      v1.extraFieldValues.sponsor[0].expenseAmount.amount = -1;
+      f.decisions.push(v2);
+      f.versionlog[v1.ada] = { ada: v1.ada, versions: [
+        { versionId: v1.versionId, versionTimestamp: 1, correctedVersionId: null, status: "PUBLISHED" },
+        { versionId: "two-lines-2", versionTimestamp: 2, correctedVersionId: v1.versionId, status: "PUBLISHED" }] };
+    });
+    const r = await buildReport(c, reader(new Map()), P);
+    expect(r.findings.find((x) => x.ada === "9ΓΒΝΩ6Μ-Λ4Η")!.status).toBe("unsupported");
+    expect(r.multiPayee).toBe(1);
+    expect(r.beyondFirstPayee).toBe(0n);
   });
 
   it("portal-missing at the window's edges reads the anchor's UTC day as either Athens day (Piraeus 2025 stores Athens midnight)", async () => {

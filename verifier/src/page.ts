@@ -61,7 +61,7 @@ export function renderPage(r: Report, m: PageMeta): string {
     "Totals count the first payee of each act only, matching what the on-chain anchor exposes."
       + (r.multiPayee ? ` <strong>${r.multiPayee} act(s) in this window have more than one payee line; the lines after the first add ${esc(formatEur(r.beyondFirstPayee))} that neither total shows.</strong>` : ""),
     r.nonEur ? `<strong>${r.nonEur} act(s) carry a non-EUR amount and are summed as if EUR.</strong>` : "",
-    r.counts.unsupported ? `<strong>${r.counts.unsupported} act(s) carry a negative or sub-cent amount</strong> (a credit line, or a rounding residue), which the canonical form cannot represent. They are not anchored and their amounts are in neither total.` : "",
+    r.counts.unsupported ? `<strong>${r.counts.unsupported} act(s) carry an amount the canonical form cannot represent</strong> (negative, as on a credit line; sub-cent, as with a rounding residue; or above 1e12 EUR). They are not anchored and their amounts are in neither total.` : "",
     r.noAmount ? `${r.noAmount} act(s) carry no amount at all (payroll orders, for one) and are invisible in both totals.` : "",
     "Voided acts are excluded from both totals. Voiding is detected from the subject text (Diavgeia has no void flag), so a void can be missed.",
     `Every anchor carries this organisation's VAT (${p.vatFromRegistry ? "from Diavgeia's organisation record" : "given by the operator: this data source has no organisation record"}), not the payer typed into the act, which is often empty or wrong. The typed payer is still part of the anchored hash, so it cannot change unnoticed either.`,

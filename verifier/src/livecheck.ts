@@ -8,6 +8,15 @@
  *    the reconstruction was wrong, and the fixture should take the live record instead.
  */
 import { actHash, unsupportedAmount, type DiavgeiaDecision } from "./canonical.js";
+
+const rawAmounts = (d: DiavgeiaDecision) => (d.extraFieldValues?.sponsor ?? []).map((s) => s.expenseAmount?.amount ?? null);
+const withoutAmounts = (d: DiavgeiaDecision): DiavgeiaDecision => ({
+  ...d,
+  extraFieldValues: d.extraFieldValues && {
+    ...d.extraFieldValues,
+    sponsor: d.extraFieldValues.sponsor?.map((s) => ({ ...s, expenseAmount: s.expenseAmount && { ...s.expenseAmount, amount: undefined } })),
+  },
+});
 import type { DiavgeiaClient } from "./diavgeia.js";
 import { versionsOf } from "./report.js";
 import { isPerActError } from "./validate.js";
@@ -89,8 +98,12 @@ export async function liveCheck(client: DiavgeiaClient, fx: FixtureFile, warn = 
       continue;
     }
     if (!l) { lines.push({ what: tag, ok: false, detail: "version not returned by the live API" }); continue; }
-    const unhashable = unsupportedAmount(d) ?? unsupportedAmount(l);
-    if (unhashable) { lines.push({ what: tag, ok: false, detail: `cannot hash (${unhashable}); compare by hand` }); continue; }
+    if (unsupportedAmount(d) ?? unsupportedAmount(l)) {
+      // Not hashable (SPEC §2): compare the raw amounts, and everything else by hashing with amounts removed.
+      const same = JSON.stringify(rawAmounts(d)) === JSON.stringify(rawAmounts(l)) && actHash(withoutAmounts(d)) === actHash(withoutAmounts(l));
+      lines.push({ what: tag, ok: same, detail: same ? `unhashable amount (${unsupportedAmount(d) ?? unsupportedAmount(l)}), otherwise matches` : "differs (record has an unhashable amount)" });
+      continue;
+    }
     const a = actHash(d), b = actHash(l);
     lines.push({ what: tag, ok: a === b, detail: a === b ? `hash ${a.slice(0, 18)}… matches` : `fixture ${a.slice(0, 18)}… live ${b.slice(0, 18)}…` });
   }

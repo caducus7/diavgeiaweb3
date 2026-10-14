@@ -155,13 +155,17 @@ canonical form cannot hold, §2; not anchored, its amount in neither total, not 
 that fails §8 is not scoped to its act: it aborts the run, because the totals cannot be computed honestly
 without it. An unsupported amount is not a §8 failure. It never hides tampering: when the chain already
 holds the version that now carries it, the act is a `mismatch`; when it comes after the anchored versions,
-`chain-behind` (blocked).
+`chain-behind` (blocked). Versions both sides hold are compared first, so nothing a later version carries
+can hide an edit to an anchored one.
 Then, for every ADA in the registry's `Anchored` logs whose latest anchor has the org's `payerVat` and an
 `issueDate` inside the window but which the portal did not return: `portal-missing`. Its amount counts in
 the chain total. The anchor holds the UTC day and the window is in Athens days, the same day or the next,
 so UTC days `from..to-1` are inside; `from-1` and `to` are each inside or on the neighbouring day, and such an
-anchor is `portal-missing` only if a one-day search of that neighbouring day does not return it either. On a
-recording, the neighbouring days are whatever the recording holds.
+anchor is skipped only if a one-day search of that neighbouring day returns it with the same UTC day (an
+Athens-midnight act of that day, checked in its own window). Otherwise, including an act moved to another
+day, it is `portal-missing`. On a recording, the neighbouring days are whatever the recording holds.
+Limitation of canonical v1: the hash holds the UTC day only, so moving an act from 00:00 UTC to 21:00-23:59
+UTC of the same UTC day changes its Athens day (and the window it is reported in) without changing its hash.
 Prints portal and chain non-void totals and their difference. Exit 2 if any `mismatch`, `foreign-anchor`,
 `chain-ahead`, `portal-missing` or `history-error` (also with `--json`). A `history-error` is scoped to its act: the run
 carries on. A network or HTTP failure aborts the run (exit 1) rather than producing partial totals.
@@ -186,7 +190,8 @@ shows ADAs, statuses and amounts only; subjects and payee names are left out. It
 `verify` and `page` give the sum of the payee lines after the first (portal side, non-void, supported acts),
 which neither total counts. Same exit code as `verify`.
 
-`anchor` skips an act whose history is a `history-error` (exit 2). It checks each version before sending it,
+`anchor` skips an act whose history is a `history-error`, or whose anchored versions the portal now
+contradicts (verify's `mismatch`; it never appends to such a chain), with exit 2. It checks each version before sending it,
 with the same rule the report uses (`anchorBlocker`): any version after a void, or with an amount the
 canonical form cannot hold, is not sent, and neither is anything after it; earlier versions of that act are still
 anchored. These registry refusals are logged and exit 0, since they are permanent facts about the data that
@@ -196,7 +201,8 @@ anchored. These registry refusals are logged and exit 0, since they are permanen
 the fixture format, so `anchor`, `verify` and `page` can run offline on it.
 
 `live-check --fixture f.json`: re-runs the search in the fixture's `_source` against the live API and
-compares canonical hashes per versionId. Reports acts missing on either side, live versions newer than the
+compares canonical hashes per versionId (for a record with an unhashable amount, §2: the raw amounts, and the
+hash of the record with amounts removed). Reports acts missing on either side, live versions newer than the
 fixture, and per-act errors as `DIFF` lines. Exit 2 on any difference.
 
 `DIAVGEIA_RECORD=f.json` on a live run saves every record and version log fetched, in the fixture format.

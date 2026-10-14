@@ -290,6 +290,19 @@ describe("live-check", () => {
     expect(lines.filter((l) => !l.ok)).toEqual([]);
   });
 
+  it("compares a record with an unhashable amount (a credit line) instead of always flagging it", async () => {
+    const credit = (amount: number, subject?: string) => fx.decisions.map((d: DiavgeiaDecision, i: number) => i !== 0 ? d : {
+      ...d, subject: subject ?? d.subject,
+      extraFieldValues: { ...d.extraFieldValues, sponsor: [...d.extraFieldValues!.sponsor!, { ...d.extraFieldValues!.sponsor![0], expenseAmount: { amount, currency: "EUR" } }] },
+    });
+    const fixture = { ...fx, decisions: credit(-1267.94) };
+    const run = async (liveDecisions: DiavgeiaDecision[]) =>
+      (await liveCheck(live(mockApi(liveDecisions, fx.versionlog).f), fixture as never, quiet)).filter((l) => l.what.startsWith(fx.decisions[0].ada));
+    expect((await run(credit(-1267.94))).map((l) => l.ok)).toEqual([true]);
+    expect((await run(credit(-1267.95))).map((l) => l.ok)).toEqual([false]);
+    expect((await run(credit(-1267.94, "ΑΛΛΟ"))).map((l) => l.ok)).toEqual([false]);
+  });
+
   it("flags a record whose live content differs, and a live act the fixture lacks", async () => {
     const drifted = fx.decisions.map((d, i) => (i === 2 ? { ...d, subject: d.subject + " " } : d));
     const extra = { ...paints, ada: "NEW-1", versionId: "new-1" };

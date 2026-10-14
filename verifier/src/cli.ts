@@ -20,7 +20,7 @@ import { makeClient, BASE } from "./diavgeia.js";
 import { RecordingClient, prefetch } from "./record.js";
 import { liveCheck, type FixtureFile } from "./livecheck.js";
 import { parseDecision } from "./validate.js";
-import { actHash, adaKey, toCents, isVoid, vatToUint } from "./canonical.js";
+import { actHash, adaKey, toCents, isVoid, vatToUint, unsupportedAmount } from "./canonical.js";
 import { isPerActError } from "./validate.js";
 import {
   deploy, loadDeployment, anchorOne, readVersions, gate, graph, ZERO32, publicClient, chainReader, ensureOrgSigner, isLocalChain, ADMIN_KEY,
@@ -94,7 +94,7 @@ async function cmdAnchor() {
   console.log(`${latest.length} acts from Diavgeia (org ${a.org}, ${a.type}, ${a.from}..${a.to})`);
   if (!latest.length) return; // nothing to anchor, so no reason to register a key
   const key = await orgSigner(dep, vat);
-  let anchored = 0, skipped = 0, failed = 0, refused = 0, foreign = 0;
+  let anchored = 0, skipped = 0, failed = 0, refused = 0, foreign = 0, mismatched = 0;
   for (const l of latest) {
     let vs;
     try { vs = await versionsOf(client, l); }
@@ -108,6 +108,9 @@ async function cmdAnchor() {
     const onChain = await readVersions(dep, l.ada);
     const notOurs = foreignAnchor(onChain, vatToUint(vat));
     if (notOurs) { foreign++; console.warn(`  ! not anchored ${l.ada}: ${notOurs}; verify reports it as an alarm`); continue; }
+    // Never append to a chain the portal now contradicts: verify reports that act as a mismatch.
+    const differs = onChain.findIndex((c, i) => i < vs.length && (unsupportedAmount(vs[i]) !== null || c.actHash !== actHash(vs[i])));
+    if (differs >= 0) { mismatched++; console.warn(`  ! not anchored ${l.ada}: version ${differs + 1} on chain differs from the portal's; verify reports it as an alarm`); continue; }
     if (vs.length <= onChain.length) { skipped++; continue; }
     let prev: Hex = onChain.length ? onChain[onChain.length - 1].actHash : ZERO32;
     let lastVoided = onChain.length ? onChain[onChain.length - 1].voided : null;
@@ -137,10 +140,11 @@ async function cmdAnchor() {
   }
   console.log(`done: ${anchored} versions anchored, ${skipped} ADAs already current`
     + (failed ? `, ${failed} skipped on portal errors` : "") + (refused ? `, ${refused} refused by registry rules (see above)` : "")
-    + (foreign ? `, ${foreign} anchored by another organisation's key (see above)` : ""));
+    + (foreign ? `, ${foreign} anchored by another organisation's key (see above)` : "")
+    + (mismatched ? `, ${mismatched} whose anchored versions the portal now contradicts (see above)` : ""));
   // Registry refusals are permanent facts about the data (verify reports them, not as alarms); exit 2 is kept
   // for portal inconsistencies, which may change between runs, and for another organisation's anchors.
-  if (failed || foreign) process.exitCode = 2;
+  if (failed || foreign || mismatched) process.exitCode = 2;
 }
 
 const params = async (): Promise<ReportParams> => {

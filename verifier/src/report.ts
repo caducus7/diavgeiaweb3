@@ -62,7 +62,7 @@ export interface Report {
   /** Portal side only: the lines after the first payee of non-void multi-payee acts, which neither total
    *  counts. Itemised bills to one payee, mostly (CONTEXT, 2025 findings). */
   beyondFirstPayee: bigint;
-  /** Acts in the window, and how many of them count in the portal total (non-void, with an amount). */
+  /** Acts the portal returned for the window. */
   acts: number;
   nonEur: number;
   noAmount: number; // acts whose first payee carries no amount (payroll, for one): invisible in both totals
@@ -166,8 +166,6 @@ export async function buildReport(client: DiavgeiaClient, chain: ChainReader, p:
     else if (typed !== orgVat) payerNotes.other.push({ ada: l.ada, typedVat: l.extraFieldValues!.org!.afm! });
     const sponsors = l.extraFieldValues?.sponsor ?? [];
     if (sponsors.length > 1) multiPayee++;
-    if (sponsors.length > 1 && !isVoid(l.subject) && !unsupportedAmount(l))
-      for (const s of sponsors.slice(1)) beyondFirstPayee += toCents(s.expenseAmount?.amount);
     if (sponsors.some((s) => (s.expenseAmount?.currency ?? "EUR") !== "EUR")) nonEur++;
     if (sponsors[0]?.expenseAmount?.amount == null && !isVoid(l.subject)) noAmount++;
 
@@ -182,6 +180,8 @@ export async function buildReport(client: DiavgeiaClient, chain: ChainReader, p:
     // hashed or anchored (SPEC §6). The latest version's amount then counts in neither total.
     const badAt = (vs ?? [l]).findIndex((v) => unsupportedAmount(v) !== null);
     const unsupported = badAt < 0 ? null : `${vs ? `v${badAt + 1}` : "the latest version"} has ${unsupportedAmount((vs ?? [l])[badAt])}`;
+    if (badAt < 0 && sponsors.length > 1 && !isVoid(l.subject))
+      for (const s of sponsors.slice(1)) beyondFirstPayee += toCents(s.expenseAmount?.amount);
 
     const onChain = await chain.versions(l.ada);
     const last = onChain.length ? onChain[onChain.length - 1] : null;
@@ -205,26 +205,21 @@ export async function buildReport(client: DiavgeiaClient, chain: ChainReader, p:
       continue;
     }
     if (foreign) { f("foreign-anchor", foreign); continue; }
-    // Never let an unsupported amount hide tampering: a version the chain holds that the portal now shows with
-    // an unhashable amount has changed since it was anchored.
-    if (unsupported && badAt < onChain.length) {
-      f("mismatch", `version ${badAt + 1} is on chain, but the portal's ${unsupported.slice(unsupported.indexOf(" has ") + 1)}`);
-      continue;
-    }
-    if (unsupported) {
-      f("chain-behind", `chain has ${onChain.length} of ${vs.length} portal versions; ${unsupported}, which cannot be anchored, so it and every later version are blocked`);
-      continue;
-    }
 
-    // Compare position by position. The chain may lag the portal (a version not
-    // yet anchored) but must never disagree with it on a version both hold.
+    // Compare position by position, before anything else about later versions, so nothing a later version
+    // carries (an unsupported amount, say) can hide an edit to an anchored one. The chain may lag the portal
+    // but must never disagree with it on a version both hold. A held version whose amount the portal now
+    // shows unhashable was hashable when anchored, so it has changed.
     const shared = Math.min(onChain.length, vs.length);
     let diverged = -1;
     for (let i = 0; i < shared; i++) {
-      if (onChain[i].actHash !== actHash(vs[i])) { diverged = i; break; }
+      if (unsupportedAmount(vs[i]) || onChain[i].actHash !== actHash(vs[i])) { diverged = i; break; }
     }
     if (diverged >= 0) {
-      f("mismatch", `version ${diverged + 1} on chain ${onChain[diverged].actHash.slice(0, 12)}… but portal's hashes to ${actHash(vs[diverged]).slice(0, 12)}…`);
+      const bad = unsupportedAmount(vs[diverged]);
+      f("mismatch", bad
+        ? `version ${diverged + 1} is on chain, but the portal's now has ${bad}`
+        : `version ${diverged + 1} on chain ${onChain[diverged].actHash.slice(0, 12)}… but portal's hashes to ${actHash(vs[diverged]).slice(0, 12)}…`);
       continue;
     }
     if (onChain.length > vs.length) { f("chain-ahead", `chain has ${onChain.length} versions, portal shows ${vs.length}`); continue; }
@@ -232,7 +227,8 @@ export async function buildReport(client: DiavgeiaClient, chain: ChainReader, p:
       const why = anchorBlocker(vs[onChain.length], last);
       f("chain-behind", why
         ? `chain has ${onChain.length} of ${vs.length} portal versions; v${onChain.length + 1} is blocked (${why}), and every later version with it`
-        : `chain has ${onChain.length} of ${vs.length} portal versions; the rest are not anchored yet`);
+        : `chain has ${onChain.length} of ${vs.length} portal versions; the rest are not anchored yet`
+          + (unsupported ? `, and ${unsupported}, which cannot be anchored` : ""));
       continue;
     }
     f(voided ? "void" : "ok", voided ? `voided in v${vs.length}; earlier versions still on chain` : `${vs.length} version(s) match`);
@@ -245,22 +241,25 @@ export async function buildReport(client: DiavgeiaClient, chain: ChainReader, p:
   // fromDay-1 and toDay are each either inside or on the neighbouring day: for those, the act is missing only
   // if the portal does not return it on that neighbouring day either.
   const seen = new Set(latest.map((l) => l.ada.normalize("NFC")));
-  const neighbour = new Map<number, Promise<Set<string>>>();
-  const onNeighbour = async (day: number, ada: string): Promise<boolean> => {
+  // A neighbour-day act is skipped only if its UTC day is still the anchored one (an Athens-midnight act of the
+  // neighbouring day, checked in that day's own window). One moved to another day is missing from this window.
+  const neighbour = new Map<number, Promise<Map<string, DiavgeiaDecision>>>();
+  const onNeighbour = async (day: number, ada: string, anchoredDay: number): Promise<boolean> => {
     if (!neighbour.has(day)) {
       const iso = new Date(day * 86_400_000).toISOString().slice(0, 10);
       neighbour.set(day, client.search({ org: p.org, type: p.type, fromIssueDate: iso, toIssueDate: iso })
-        .then((ds) => new Set(ds.map((d) => d.ada.normalize("NFC")))));
+        .then((ds) => new Map(ds.map((d) => [d.ada.normalize("NFC"), d]))));
     }
-    return (await neighbour.get(day)!).has(ada.normalize("NFC"));
+    const d = (await neighbour.get(day)!).get(ada.normalize("NFC"));
+    return d !== undefined && unixDay(d.issueDate) === anchoredDay;
   };
   for (const ada of await chain.anchoredAdas()) {
     if (seen.has(ada.normalize("NFC"))) continue;
     const onChain = await chain.versions(ada);
     const last = onChain[onChain.length - 1];
     if (!last || last.payerVat !== orgVat || last.issueDate < fromDay - 1 || last.issueDate > toDay) continue;
-    if (last.issueDate === fromDay - 1 && await onNeighbour(fromDay - 1, ada)) continue;
-    if (last.issueDate === toDay && await onNeighbour(toDay + 1, ada)) continue;
+    if (last.issueDate === fromDay - 1 && await onNeighbour(fromDay - 1, ada, last.issueDate)) continue;
+    if (last.issueDate === toDay && await onNeighbour(toDay + 1, ada, last.issueDate)) continue;
     if (!last.voided) chainTotal += last.amountCents;
     findings.push({ ada, status: "portal-missing", detail: `anchored (${onChain.length} version(s)) but not returned by the portal`, portalCents: null, chainCents: last.amountCents });
   }
