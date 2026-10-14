@@ -61,6 +61,40 @@ a crypto audience.
   so the chain keeps it voided while the portal shows it live. 1 of 35 voided acts. Open question below.
 - No multi-payee and no non-EUR acts in 2025. The multi-payee question is not urgent for Athens Β.2.2.
 
+## Findings from five more municipalities (2025, Β.2.2, recorded 2026-10-14)
+
+Thessaloniki 6114, Piraeus 6243, Patras 6241, Heraklion (Crete) 6325 and Larissa 6167, ids from
+`/organizations`. Each recorded live, anchored on its own Anvil and verified from the recording.
+
+| Org | Acts | Portal = chain (EUR) | Statuses | Multi-payee | No amount | Typed payer empty | Signers |
+| --- | ---: | ---: | --- | ---: | ---: | ---: | ---: |
+| Thessaloniki | 6,800 | 143,070,102.60 vs 143,076,048.17 | 6,792 ok, 6 unsupported, 1 chain-behind, 1 history-error | 408 | 36 | 1 | 2 |
+| Piraeus | 3,779 | 61,465.37 | all ok | 4 | 3,772 | 0 | 1 |
+| Patras | 7,451 | 87,693,786.27 | 7,450 ok, 1 unsupported | 207 | 3,171 | 0 | 3 |
+| Heraklion | 5,839 | 70,329,504.67 | 5,836 ok, 3 unsupported | 0 | 2,453 | 2 | 1 |
+| Larissa | 7,635 | 76,770,812.96 | 7,632 ok, 3 unsupported | 1,333 | 1 | 7,560 | 2 |
+
+- Before this run's fixes **every one of the five aborted at ingestion**: Athens was the clean case. Two causes:
+  amounts the canonical form cannot hold (credit lines in Thessaloniki, Patras, Larissa; float residues where
+  0.00 was meant in Heraklion: 5.68434e-14, 6.03961e-14, -1.42109e-14), now `unsupported` per act; and
+  Piraeus storing every `issueDate` at Athens midnight, which the API's inclusive range returns in two
+  adjacent windows (SPEC §7), now handled. 13 acts across 2025 are `unsupported`; none is an alarm.
+- Thessaloniki's difference (-5,946.43) is two acts: ΡΙ2ΥΩΡ5-2Ρ4, whose v2 adds a -1.66 line so the chain
+  stops at v1, and 6ΞΒΚΩΡ5-ΛΟΕ, whose version log names a newer version than search returns (`history-error`,
+  the run's one alarm).
+- **Multi-payee acts are itemised bills, not split payments.** Of 1,941 acts with more than one sponsor line
+  in the five, 1,936 name the same payee VAT on every line (up to 145 lines). Only 5, all in Larissa, pay
+  more than one party. The first-payee totals miss 31.8M EUR in Thessaloniki (18%), 20.5M in Larissa (21%)
+  and 3.2M in Patras (3.5%): computed from the recordings, with first-payee sums that match `verify`'s portal
+  totals to the cent.
+- **Many bodies leave amounts out.** Piraeus fills an amount on 7 of 3,779 payment acts, so its totals say
+  nothing; Patras and Heraklion leave it out on about 42%. The tamper evidence holds regardless (every act is
+  anchored), but the headline number only covers acts that state an amount.
+- **One or two people sign everything.** Piraeus and Heraklion: one signer for every act; Thessaloniki two;
+  none of the signers in any of the seven bodies holds organisation-level signing rights. No signer issues.
+- The payer decision mattered: Larissa types no payer on 7,560 of 7,635 acts.
+- Anvil keeps about 2 MB of state per anchor (15 GB for Thessaloniki): one fresh Anvil per organisation-year.
+
 ## What runs today
 
 - 22 Foundry tests, 108 vitest tests, all green.
@@ -84,7 +118,12 @@ a crypto audience.
 - [ ] Signer key custody: issuance, revocation, post changes. The Diavgeia signer registry is the obvious
       identity source; its accuracy is unknown.
 - [ ] Multi-payee acts: the anchor exposes only the first sponsor (SPEC §4). Decide whether to hash a
-      Merkle root of payees or to emit one anchor per payee.
+      Merkle root of payees or to emit one anchor per payee. **Data 2026-10-14:** 1,936 of 1,941 multi-line
+      acts in five municipalities repeat one payee; the first-payee rule misses 18-21% of the money in
+      Thessaloniki and Larissa. Summing the lines when they share a payee would cover 99.7% of cases without
+      a struct change, but changes what `amountCents` means.
+- [ ] Unsupported amounts (13 acts in 2025): negative credit lines and float residues. Keep rejecting
+      (current), or define them in a canonical form v2 (signed amounts, or netting lines per payee)?
 - [ ] Who at the Ministry of Digital Governance owns the Β.2.2 field list, and what making KAE and CPV
       mandatory would take.
 - [ ] Un-voiding: the registry treats a void as final (`AlreadyVoided`), but the portal un-voided one 2025
