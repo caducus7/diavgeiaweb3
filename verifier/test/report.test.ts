@@ -274,6 +274,18 @@ describe("buildReport", () => {
     expect(r.alarm).toBe(true);
   });
 
+  it("sums the payee lines after the first, which neither total counts (Thessaloniki, Larissa 2025)", async () => {
+    const c = clientWith((f) => {
+      const s = f.decisions[0].extraFieldValues.sponsor;
+      s.push({ ...s[0], expenseAmount: { amount: 100.5, currency: "EUR" } }, { ...s[0], expenseAmount: { amount: 0.25, currency: "EUR" } });
+    });
+    const r = await buildReport(c, reader(new Map()), P);
+    expect(r.multiPayee).toBe(1);
+    expect(r.beyondFirstPayee).toBe(10075n);
+    expect(r.acts).toBe(4);
+    expect(r.portalTotal).toBe(62425209n); // the first payee only, as before
+  });
+
   it("counts non-void acts with no amount, which neither total can see", async () => {
     const c = clientWith((f) => {
       delete f.decisions[0].extraFieldValues.sponsor[0].expenseAmount.amount; // live act: counted
@@ -360,6 +372,13 @@ describe("adaFromKey", () => {
 });
 
 describe("renderPage", () => {
+  it("says beside the totals when acts state no amount (Piraeus 2025: 3,772 of 3,779)", async () => {
+    const c = clientWith((f) => { for (const d of f.decisions) delete d.extraFieldValues.sponsor[0].expenseAmount.amount; });
+    const r = await buildReport(c, reader(new Map()), P);
+    const html = renderPage(r, { source: "fixture", fixturePath: "x.json", generatedAt: new Date(0), registry: "0xabc", chainId: 31337 });
+    expect(html).toContain("<strong>3 of 4 acts state no amount</strong>, so these totals cover only the rest.");
+  });
+
   it("escapes Diavgeia-sourced text and leaves out subjects and payee names", async () => {
     const c = clientWith((f) => {
       f.organizations["6013"].label = `<script>alert(1)</script>`;
@@ -377,5 +396,6 @@ describe("renderPage", () => {
     expect(html).toContain("0 act(s) leave the payer field empty and 1 name a payer other than this organisation");
     expect(html).toContain(">61Θ6Ω6Μ-2ΑΗ</a></td></tr>");
     expect(html).not.toContain("996607880"); // the other party's VAT stays on the portal
+    expect(html).not.toContain("state no amount</strong>"); // every act here states one
   });
 });

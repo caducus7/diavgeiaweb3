@@ -59,6 +59,11 @@ export interface Report {
   difference: bigint; // portalTotal - chainTotal
   counts: Partial<Record<Status, number>>;
   multiPayee: number;
+  /** Portal side only: the lines after the first payee of non-void multi-payee acts, which neither total
+   *  counts. Itemised bills to one payee, mostly (CONTEXT, 2025 findings). */
+  beyondFirstPayee: bigint;
+  /** Acts in the window, and how many of them count in the portal total (non-void, with an amount). */
+  acts: number;
   nonEur: number;
   noAmount: number; // acts whose first payee carries no amount (payroll, for one): invisible in both totals
   /** Every signer of the window's acts (latest versions), from Diavgeia's signer registry. Ids only, no names. */
@@ -149,7 +154,7 @@ export async function buildReport(client: DiavgeiaClient, chain: ChainReader, p:
   const orgVat = vatToUint(p.orgVat);
   if (!p.vatFromRegistry) checkFallbackVat(latest, p.org, p.orgVat);
   const findings: Finding[] = [];
-  let portalTotal = 0n, chainTotal = 0n, multiPayee = 0, nonEur = 0, noAmount = 0;
+  let portalTotal = 0n, chainTotal = 0n, multiPayee = 0, nonEur = 0, noAmount = 0, beyondFirstPayee = 0n;
   const payerNotes: Report["payerNotes"] = { empty: 0, other: [] };
   // The name from Diavgeia's organisation record; the typed payer name can be another party's (a swapped act).
   let orgName: string | null = (await client.organization(p.org))?.label.normalize("NFC")
@@ -161,6 +166,8 @@ export async function buildReport(client: DiavgeiaClient, chain: ChainReader, p:
     else if (typed !== orgVat) payerNotes.other.push({ ada: l.ada, typedVat: l.extraFieldValues!.org!.afm! });
     const sponsors = l.extraFieldValues?.sponsor ?? [];
     if (sponsors.length > 1) multiPayee++;
+    if (sponsors.length > 1 && !isVoid(l.subject) && !unsupportedAmount(l))
+      for (const s of sponsors.slice(1)) beyondFirstPayee += toCents(s.expenseAmount?.amount);
     if (sponsors.some((s) => (s.expenseAmount?.currency ?? "EUR") !== "EUR")) nonEur++;
     if (sponsors[0]?.expenseAmount?.amount == null && !isVoid(l.subject)) noAmount++;
 
@@ -263,7 +270,7 @@ export async function buildReport(client: DiavgeiaClient, chain: ChainReader, p:
   const counts: Partial<Record<Status, number>> = {};
   for (const x of findings) counts[x.status] = (counts[x.status] ?? 0) + 1;
   return {
-    params: p, orgName, findings, portalTotal, chainTotal, difference: portalTotal - chainTotal, counts, multiPayee, nonEur, noAmount, signers, signerIssues, signerChecks, payerNotes,
+    params: p, orgName, findings, portalTotal, chainTotal, difference: portalTotal - chainTotal, counts, multiPayee, beyondFirstPayee, acts: latest.length, nonEur, noAmount, signers, signerIssues, signerChecks, payerNotes,
     alarm: findings.some((x) => ALARM.has(x.status)),
   };
 }

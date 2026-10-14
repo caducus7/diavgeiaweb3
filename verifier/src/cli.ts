@@ -156,7 +156,8 @@ async function cmdVerify() {
     for (const f of r.findings) console.log(`  ${f.status.padEnd(14)} ${f.ada.padEnd(12)} ${f.detail}`);
     console.log(`\n  portal total (non-void)  ${eur(r.portalTotal)}\n  chain total  (non-void)  ${eur(r.chainTotal)}\n  difference               ${eur(r.difference)}`);
     console.log(`  ${Object.entries(r.counts).map(([k, v]) => `${k}=${v}`).join("  ")}`);
-    if (r.multiPayee) console.log(`  note: ${r.multiPayee} multi-payee act(s); totals count the first payee only`);
+    if (r.multiPayee) console.log(`  note: ${r.multiPayee} multi-payee act(s); totals count the first payee only, missing ${eur(r.beyondFirstPayee)} (portal side)`);
+    if (r.noAmount) console.log(`  note: ${r.noAmount} of ${r.acts} act(s) state no amount; neither total sees them`);
     console.log(`  signers: ${r.signers.map((s) => `${s.id} (${s.acts} acts, org-level rights ${s.orgSignRights === null ? "unknown" : s.orgSignRights ? "yes" : "no"})`).join(", ") || "none"}`);
     for (const i of r.signerIssues) console.log(`  signer issue ${i.ada} ${i.signerId}: ${i.issue}`);
     const pn = r.payerNotes;

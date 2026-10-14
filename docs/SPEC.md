@@ -182,7 +182,9 @@ The portal-missing scan reads `Anchored` logs from the registry's deployment blo
 
 `page`: the same reconciliation rendered as one static HTML file (no scripts, no external requests). It
 shows ADAs, statuses and amounts only; subjects and payee names are left out. It states its data source
-(live or fixture) and the caveats on the totals. Same exit code as `verify`.
+(live or fixture) and the caveats on the totals. When at least a tenth of the acts state no amount it says so beside the totals.
+`verify` and `page` give the sum of the payee lines after the first (portal side, non-void, supported acts),
+which neither total counts. Same exit code as `verify`.
 
 `anchor` skips an act whose history is a `history-error` (exit 2). It checks each version before sending it,
 with the same rule the report uses (`anchorBlocker`): any version after a void, or with an amount the

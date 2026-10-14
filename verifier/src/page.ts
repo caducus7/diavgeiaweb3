@@ -59,7 +59,7 @@ export function renderPage(r: Report, m: PageMeta): string {
       ? `Data source: a saved fixture (${esc(basename(m.fixturePath ?? ""))}), not the live portal. The live OpenData API was not queried for this page.`
       : "Data source: the live Diavgeia OpenData API at the time shown below.",
     "Totals count the first payee of each act only, matching what the on-chain anchor exposes."
-      + (r.multiPayee ? ` <strong>${r.multiPayee} act(s) in this window have more than one payee and are understated.</strong>` : ""),
+      + (r.multiPayee ? ` <strong>${r.multiPayee} act(s) in this window have more than one payee line; the lines after the first add ${esc(formatEur(r.beyondFirstPayee))} that neither total shows.</strong>` : ""),
     r.nonEur ? `<strong>${r.nonEur} act(s) carry a non-EUR amount and are summed as if EUR.</strong>` : "",
     r.counts.unsupported ? `<strong>${r.counts.unsupported} act(s) carry a negative or sub-cent amount</strong> (a credit line, or a rounding residue), which the canonical form cannot represent. They are not anchored and their amounts are in neither total.` : "",
     r.noAmount ? `${r.noAmount} act(s) carry no amount at all (payroll orders, for one) and are invisible in both totals.` : "",
@@ -83,7 +83,7 @@ h1 { font-size:1.4rem; margin:0 0 4px; } .sub { color:var(--mute); margin:0 0 24
 .big div { border:1px solid var(--line); border-radius:8px; padding:12px; } .big span { display:block; color:var(--mute); font-size:.85rem; }
 .big b { font-size:1.3rem; font-variant-numeric:tabular-nums; }
 .verdict { padding:10px 12px; border-radius:8px; border:1px solid currentColor; margin-bottom:24px; }
-.verdict.bad { color:var(--bad); } .verdict.good { color:var(--good); }
+.verdict.bad { color:var(--bad); } .verdict.good { color:var(--good); } .verdict.warn { color:var(--warn); }
 .scroll { overflow-x:auto; } table { border-collapse:collapse; width:100%; font-size:.9rem; }
 th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; } td.n { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
 tr.s-mismatch td:nth-child(2), tr.s-foreign-anchor td:nth-child(2), tr.s-chain-ahead td:nth-child(2), tr.s-portal-missing td:nth-child(2), tr.s-history-error td:nth-child(2) { color:var(--bad); font-weight:600; }
@@ -99,6 +99,7 @@ a { color:inherit; } ul { color:var(--mute); padding-left:20px; } footer { color
   <div><span>Anchored on chain (non-void)</span><b>${esc(formatEur(r.chainTotal))}</b></div>
   <div><span>Difference</span><b>${esc(formatEur(r.difference))}</b></div>
 </div>
+${r.noAmount * 10 >= r.acts && r.acts ? `<p class="verdict warn"><strong>${r.noAmount} of ${r.acts} acts state no amount</strong>, so these totals cover only the rest. The tamper check covers those acts like any other.</p>` : ""}
 <p class="verdict ${r.alarm ? "bad" : "good"}">${r.alarm
     ? "The portal and the chain disagree on published content. See the rows marked in red."
     : "No published act in this window differs from what was anchored."}</p>
