@@ -18,7 +18,7 @@ Claude doc "Diavgeia on-chain: a plan"; `docs/CONTEXT.md` summarises it.
 ## Commands
 
 ```sh
-cd contracts && forge test                         # must stay green: 20 tests
+cd contracts && forge test                         # must stay green: 22 tests
 cd verifier && npm ci && npm test && npm run typecheck
 anvil &  # then, from verifier/:
 DIAVGEIA_FIXTURE=fixtures/athens-2025-11.json npx tsx src/cli.ts deploy

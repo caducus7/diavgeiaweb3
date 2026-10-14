@@ -31,6 +31,7 @@ contract ProcurementGraph {
     error WrongContractRef();
     error WrongPayer();
     error ActVoided();
+    error SelfPayment();
     error AlreadyCounted();
     error AwardExists();
 
@@ -56,6 +57,8 @@ contract ProcurementGraph {
         if (a.contractRef == bytes32(0)) revert WrongContractRef();
         if (a.payerVat != aw.payerVat) revert WrongPayer();
         if (a.voided) revert ActVoided();
+        // Payee = publisher is money coming in, not spending against the award (see PaymentGate).
+        if (a.payeeVat == a.payerVat) revert SelfPayment();
         if (counted[a.contractRef][ada]) revert AlreadyCounted();
 
         counted[a.contractRef][ada] = true;

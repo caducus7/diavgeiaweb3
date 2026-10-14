@@ -191,6 +191,16 @@ contract DiavgeiaTest is Test {
         gate.release(adaVoid, VOID_PAYEE, 186000);
     }
 
+    function test_release_refuses_self_payment() public {
+        // 61Θ6Ω6Μ-2ΑΗ: typed with payer and payee swapped, so anchored with Athens as both
+        vm.prank(signerAthens);
+        reg.anchor(adaPaints, _paymentAnchor(hashPaintsV1, ATHENS, 139792853, 0, 0, false));
+        vm.prank(treasury);
+        vm.expectRevert(PaymentGate.SelfPayment.selector);
+        gate.release(adaPaints, ATHENS, 139792853);
+        assertEq(rail.count(), 0);
+    }
+
     function test_release_refuses_double_pay() public {
         vm.prank(signerAthens);
         reg.anchor(adaPaints, _paymentAnchor(hashPaintsV1, PAINTS_PAYEE, 2546216, 0, contractPaints, false));
@@ -245,6 +255,18 @@ contract DiavgeiaTest is Test {
         graph.linkPayment(adaPaints);
         vm.expectRevert(ProcurementGraph.AlreadyCounted.selector);
         graph.linkPayment(adaPaints);
+    }
+
+    function test_link_refuses_self_payment() public {
+        vm.prank(signerAthens);
+        graph.registerAward(contractPaints, 1_000_000, 44810000, 6261);
+        vm.prank(signerAthens);
+        reg.anchor(adaPaints, _paymentAnchor(hashPaintsV1, ATHENS, 2546216, 0, contractPaints, false));
+        vm.expectRevert(ProcurementGraph.SelfPayment.selector);
+        graph.linkPayment(adaPaints);
+        (, uint128 paid, uint32 n) = graph.spentAgainst(contractPaints);
+        assertEq(paid, 0);
+        assertEq(n, 0);
     }
 
     function test_link_refuses_unknown_award() public {

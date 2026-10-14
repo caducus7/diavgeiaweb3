@@ -14,7 +14,7 @@ contracts/            Foundry
   src/PaymentGate.sol        release(ada, payee, amount): refuses unanchored, voided, mismatched, or double payments
   src/ProcurementGraph.sol   registerAward / linkPayment / spentAgainst; emits Overrun when paid > ceiling
   src/MockRail.sol           stand-in for the bank-side settlement adapter
-  test/Diavgeia.t.sol        20 tests incl. fuzz, built on the real Athens acts
+  test/Diavgeia.t.sol        22 tests incl. fuzz, built on the real Athens acts
 verifier/             TypeScript (viem, tsx, vitest)
   src/canonical.ts           canonicalisation spec v1 + keccak256; the part anyone must be able to reproduce
   src/diavgeia.ts            OpenData client (live or fixture); handles the API's 180-day window cap
@@ -34,7 +34,7 @@ verifier/             TypeScript (viem, tsx, vitest)
 Needs Foundry (forge, anvil) and Node 22.
 
 ```sh
-cd contracts && forge test                      # 20 passed
+cd contracts && forge test                      # 22 passed
 cd ../verifier && npm install && npm test       # 102 passed
 
 anvil &                                         # local chain, default accounts

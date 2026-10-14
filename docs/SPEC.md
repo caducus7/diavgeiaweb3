@@ -102,7 +102,9 @@ first on-chain. PaymentGate therefore handles single-payee acts only. Multi-paye
 
 ### PaymentGate
 - `release(bytes32 ada, uint64 payeeVat, uint128 amountCents)`: treasury only. Reverts `NotAnchored`,
-  `NotPaymentAct`, `ActVoided`, `PayeeMismatch`, `AmountMismatch`, `AlreadyReleased`. On success marks
+  `NotPaymentAct`, `ActVoided`, `SelfPayment` (the anchor's payee is its payer, i.e. the publishing
+  organisation: money coming in, such as an act typed with payer and payee swapped), `PayeeMismatch`,
+  `AmountMismatch`, `AlreadyReleased`. On success marks
   released and calls `IEuroRail.settle(payerVat, payeeVat, amountCents, ada)`.
 - `IEuroRail` is the bank-side adapter boundary. `MockRail` records calls and does nothing else.
 
@@ -110,7 +112,7 @@ first on-chain. PaymentGate therefore handles single-payee acts only. Multi-paye
 - `registerAward(bytes32 contractRef, uint128 ceilingCents, uint32 cpv, uint32 kae)`: any registered signer;
   award's payer is the signer's org. One registration per ref.
 - `linkPayment(bytes32 ada)`: permissionless. Requires the latest anchor to be non-void, to carry a known
-  `contractRef`, and to have the award's payer. Counts each ADA once. Emits `PaymentLinked` and, when
+  `contractRef`, to have the award's payer, and a payee other than that payer (`SelfPayment`). Counts each ADA once. Emits `PaymentLinked` and, when
   `paid > ceiling`, `Overrun`.
 - `spentAgainst(contractRef) -> (ceiling, paid, payments)`.
 
