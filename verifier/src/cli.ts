@@ -20,14 +20,14 @@ import { makeClient, BASE } from "./diavgeia.js";
 import { RecordingClient, prefetch } from "./record.js";
 import { liveCheck, type FixtureFile } from "./livecheck.js";
 import { parseDecision } from "./validate.js";
-import { actHash, adaKey, toCents, isVoid } from "./canonical.js";
+import { actHash, adaKey, toCents, isVoid, vatToUint } from "./canonical.js";
 import { isPerActError } from "./validate.js";
 import {
   deploy, loadDeployment, anchorOne, readVersions, gate, graph, ZERO32, publicClient, chainReader, ensureOrgSigner, isLocalChain, ADMIN_KEY,
   type Deployment,
 } from "./chain.js";
 import { deriveOrgKey, resolveSeed } from "./orgkeys.js";
-import { buildReport, versionsOf, formatEur, reportJson, anchorBlocker, checkFallbackVat, type ReportParams } from "./report.js";
+import { buildReport, versionsOf, formatEur, reportJson, anchorBlocker, checkFallbackVat, foreignAnchor, type ReportParams } from "./report.js";
 import { renderPage } from "./page.js";
 import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -71,7 +71,6 @@ async function orgVatSourced(): Promise<{ vat: string; fromRegistry: boolean }> 
   if (a.vat) { console.warn(`  ! no organisation record for ${a.org} in this source; using --vat ${a.vat}`); return { vat: a.vat, fromRegistry: false }; }
   throw new Error(`no /organizations/${a.org} record in this source; pass --vat`);
 }
-const orgVat = async () => (await orgVatSourced()).vat;
 
 /** The organisation's derived anchoring key, registered (and funded on Anvil) if it is not yet a signer. */
 async function orgSigner(dep: Deployment, vat: string): Promise<Hex> {
@@ -92,9 +91,10 @@ async function cmdAnchor() {
   const latest = await client.search({ org: a.org!, type: a.type!, fromIssueDate: a.from!, toIssueDate: a.to! });
   // Every anchor will carry this VAT and the key is registered for it, so a fallback --vat is checked first.
   if (!fromRegistry) checkFallbackVat(latest, a.org!, vat);
-  const key = await orgSigner(dep, vat);
   console.log(`${latest.length} acts from Diavgeia (org ${a.org}, ${a.type}, ${a.from}..${a.to})`);
-  let anchored = 0, skipped = 0, failed = 0, refused = 0;
+  if (!latest.length) return; // nothing to anchor, so no reason to register a key
+  const key = await orgSigner(dep, vat);
+  let anchored = 0, skipped = 0, failed = 0, refused = 0, foreign = 0;
   for (const l of latest) {
     let vs;
     try { vs = await versionsOf(client, l); }
@@ -106,6 +106,8 @@ async function cmdAnchor() {
       continue;
     }
     const onChain = await readVersions(dep, l.ada);
+    const notOurs = foreignAnchor(onChain, vatToUint(vat));
+    if (notOurs) { foreign++; console.warn(`  ! not anchored ${l.ada}: ${notOurs}; verify reports it as an alarm`); continue; }
     if (vs.length <= onChain.length) { skipped++; continue; }
     let prev: Hex = onChain.length ? onChain[onChain.length - 1].actHash : ZERO32;
     let lastVoided = onChain.length ? onChain[onChain.length - 1].voided : null;
@@ -134,10 +136,11 @@ async function cmdAnchor() {
     }
   }
   console.log(`done: ${anchored} versions anchored, ${skipped} ADAs already current`
-    + (failed ? `, ${failed} skipped on portal errors` : "") + (refused ? `, ${refused} refused by registry rules (see above)` : ""));
+    + (failed ? `, ${failed} skipped on portal errors` : "") + (refused ? `, ${refused} refused by registry rules (see above)` : "")
+    + (foreign ? `, ${foreign} anchored by another organisation's key (see above)` : ""));
   // Registry refusals are permanent facts about the data (verify reports them, not as alarms); exit 2 is kept
-  // for portal inconsistencies, which may change between runs.
-  if (failed) process.exitCode = 2;
+  // for portal inconsistencies, which may change between runs, and for another organisation's anchors.
+  if (failed || foreign) process.exitCode = 2;
 }
 
 const params = async (): Promise<ReportParams> => {
@@ -234,7 +237,10 @@ async function cmdPay() {
 async function cmdAward() {
   const dep = loadDeployment();
   if (!a.ref || !a.ceiling) throw new Error("--ref and --ceiling required");
-  const key = await orgSigner(dep, await orgVat());
+  // No acts to check a fallback --vat against, and the key registration it would make is permanent.
+  const { vat, fromRegistry } = await orgVatSourced();
+  if (!fromRegistry) throw new Error(`award needs Diavgeia's organisation record for org ${a.org}; --vat cannot be checked here`);
+  const key = await orgSigner(dep, vat);
   const h = await graph(dep, key).write.registerAward([adaKey(a.ref), toCents(Number(a.ceiling)), Number(a.cpv), Number(a.kae)]);
   await publicClient.waitForTransactionReceipt({ hash: h });
   console.log(`award ${a.ref} registered, ceiling ${eur(toCents(Number(a.ceiling)))}`);

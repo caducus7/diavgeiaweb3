@@ -6,7 +6,7 @@ import { actHash, isVoid, toCents, unixDay, vatToUint, adaKey, type DiavgeiaDeci
 import { FixtureClient } from "../src/diavgeia.js";
 import { buildReport, checkFallbackVat, formatEur, versionsOf, type ChainReader, type ChainVersion, type ReportParams } from "../src/report.js";
 import { renderPage } from "../src/page.js";
-import { adaFromKey, toAnchor, ZERO32 } from "../src/chain.js";
+import { adaFromKey, blockRanges, toAnchor, ZERO32 } from "../src/chain.js";
 
 const FIXTURE = new URL("../fixtures/athens-2025-11.json", import.meta.url).pathname;
 const fx = JSON.parse(readFileSync(FIXTURE, "utf8"));
@@ -183,6 +183,26 @@ describe("buildReport", () => {
     expect(f.detail).toMatch(/the rest are not anchored yet/);
   });
 
+  it("an act anchored under another organisation's VAT is an alarm, and not in this organisation's chain total", async () => {
+    const c = new FixtureClient(FIXTURE);
+    const chain = await fullyAnchored(c);
+    chain.set("ΨΨ9ΣΩ6Μ-1ΕΦ", chain.get("ΨΨ9ΣΩ6Μ-1ΕΦ")!.map((v) => ({ ...v, payerVat: 90256954n })));
+    const r = await buildReport(c, reader(chain), P);
+    const f = r.findings.find((x) => x.ada === "ΨΨ9ΣΩ6Μ-1ΕΦ")!;
+    expect(f.status).toBe("foreign-anchor");
+    expect(f.detail).toMatch(/version 1 on chain is anchored under VAT 90256954/);
+    expect(r.difference).toBe(59577173n);
+    expect(r.alarm).toBe(true);
+  });
+
+  it("a version record of another ADA is a history-error", async () => {
+    const c = clientWith((f) => {
+      for (const d of f.decisions) if (d.versionId !== "87e590cb-ac02-421b-97e3-3386b2d16fd6" && d.ada === "ΨΟΣΝΩ6Μ-Θ6Ε") d.ada = "9ΓΒΝΩ6Μ-Λ4Η";
+    });
+    const r = await buildReport(c, reader(new Map()), P);
+    expect(r.findings.find((x) => x.ada === "ΨΟΣΝΩ6Μ-Θ6Ε")!.detail).toMatch(/is of ADA 9ΓΒΝΩ6Μ-Λ4Η/);
+  });
+
   it("an earlier version of another organisation is a history-error, since the anchor would claim it for this org", async () => {
     const c = clientWith((f) => {
       for (const d of f.decisions) if (d.versionId !== "87e590cb-ac02-421b-97e3-3386b2d16fd6" && d.ada === "ΨΟΣΝΩ6Μ-Θ6Ε") d.organizationId = "6027";
@@ -237,8 +257,18 @@ describe("checkFallbackVat", () => {
   it("refuses a --vat no typed payer carries", () => {
     expect(() => checkFallbackVat(acts, "6013", "090256954")).toThrow(/only 0 of 3/);
   });
-  it("passes an empty window: nothing will be anchored", () => {
-    expect(() => checkFallbackVat([], "6013", "1")).not.toThrow();
+  it("refuses an empty window: nothing to check against, yet the VAT would filter the portal-missing scan", () => {
+    expect(() => checkFallbackVat([], "6013", "090025537")).toThrow(/no org 6013 acts/);
+  });
+});
+
+describe("blockRanges", () => {
+  it("covers from..to inclusively in ranges of at most size blocks, with no gap or overlap", () => {
+    expect(blockRanges(5n, 24n, 10n)).toEqual([[5n, 14n], [15n, 24n]]);
+    expect(blockRanges(5n, 25n, 10n)).toEqual([[5n, 14n], [15n, 24n], [25n, 25n]]);
+    expect(blockRanges(7n, 7n, 10n)).toEqual([[7n, 7n]]);
+    expect(blockRanges(8n, 7n, 10n)).toEqual([]);
+    expect(() => blockRanges(0n, 1n, 0n)).toThrow(/at least 1/);
   });
 });
 

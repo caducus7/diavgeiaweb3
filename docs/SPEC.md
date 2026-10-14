@@ -27,7 +27,7 @@ Output object, keys in this order after sorting (sorting is part of the spec, li
 | payees[].name | string | `sponsorAFMName.name`, NFC |
 | payees[].vat | string | `sponsorAFMName.afm`, NFC |
 | payerName | string | `extraFieldValues.org.name`, NFC |
-| payerVat | string | `extraFieldValues.org.afm`, NFC |
+| payerVat | string | `extraFieldValues.org.afm`, NFC (the typed payer; the anchor struct's `payerVat`, §4, is not this) |
 | prevVersionId | string or null | `correctedVersionId` |
 | protocolNumber | string or null | `protocolNumber`, NFC |
 | signerIds | string[] | `signerIds`, sorted ascending as strings |
@@ -82,7 +82,9 @@ bool    voided       true if this version voids the act
 organisation's key anchored this organisation's act". The payer typed into the act (`extraFieldValues.org.afm`)
 is empty on most acts of some bodies (Amorgos 2025: 647 of 681 versions) and wrong on a few (Athens 2025: one
 act with payer and payee swapped). It stays in `actHash` (§2), so it cannot change unnoticed, and `verify`
-reports it as a data-quality note (§6). Before 2026-10-12 `payerVat` was the typed payer and acts without the
+reports it as a data-quality note (§6). The registry does not tie an ADA to an organisation: any registered
+signer can anchor any ADA under its own VAT. `verify` therefore raises an act of this organisation anchored
+under another VAT (`foreign-anchor`), and `anchor` does not append to it. Before 2026-10-12 `payerVat` was the typed payer and acts without the
 org's typed VAT could not be anchored; no anchors from that rule exist outside throwaway Anvil chains.
 
 Known limitation: acts with more than one sponsor commit to all of them in `actHash` but expose only the
@@ -140,23 +142,32 @@ position by position. Statuses:
 `ok`, `void` (latest version voids; earlier versions still on chain), `unanchored`, `mismatch` (a version
 both sides hold differs), `chain-ahead` (chain has versions the portal no longer shows), `chain-behind`
 (chain holds a matching prefix of the portal's versions; the detail says whether the rest are merely not yet
-anchored or blocked after a void), `history-error`
+anchored or blocked after a void), `foreign-anchor` (a version on chain carries another VAT than the
+organisation's, §4; not counted in the chain total), `history-error`
 (the portal contradicts itself about this act's history: the version log does not end with the version search
-returned, a version record is for a different version or another organisation, or the log or an earlier
+returned, a version record is for a different version, ADA or organisation, or the log or an earlier
 version fails the shape checks of §8). A search record that fails §8 is not scoped to its act: it aborts the run, because the totals
 cannot be computed honestly without it.
 Then, for every ADA in the registry's `Anchored` logs whose latest anchor has the org's `payerVat` and an
 `issueDate` inside the window but which the portal did not return: `portal-missing`. Its amount counts in
 the chain total.
-Prints portal and chain non-void totals and their difference. Exit 2 if any `mismatch`, `chain-ahead`,
-`portal-missing` or `history-error` (also with `--json`). A `history-error` is scoped to its act: the run
+Prints portal and chain non-void totals and their difference. Exit 2 if any `mismatch`, `foreign-anchor`,
+`chain-ahead`, `portal-missing` or `history-error` (also with `--json`). A `history-error` is scoped to its act: the run
 carries on. A network or HTTP failure aborts the run (exit 1) rather than producing partial totals.
 `chain-behind` and `unanchored` are lag, not disagreement.
 Payer notes (reported, never a gate): how many latest versions leave the typed payer empty, and which name a
 VAT other than the organisation's. `verify` prints those VATs; `page` lists the ADAs only.
 A `--vat` given in place of the organisation record is the VAT every anchor carries and the key is registered
 for, so `anchor`, `verify` and `page` check it against the acts that type a payer: with 3 or more, at least
-half must carry it; with 1 or 2, at least one. With none it cannot be checked and the run is refused.
+half must carry it; with 1 or 2, at least one. With none, or no acts in the window, it cannot be checked and
+the run is refused. The check trusts typed payers: a body that habitually types its parent's VAT would pass
+with the parent's VAT, so the organisation record is the only sound source. `award` has no acts to check
+against and requires the record. `anchor` registers nothing for an empty window.
+
+The portal-missing scan reads `Anchored` logs from the registry's deployment block (`deployBlock` in
+`deployment.json`; 0 if absent) to the head pinned at the start, in ranges of `LOG_BLOCK_RANGE` blocks
+(default 10,000, a common hosted-RPC cap). It filters by VAT only: two Diavgeia organisations sharing a
+`vatNumber` would see each other's anchors as `portal-missing`. Not seen so far; unverified.
 
 `page`: the same reconciliation rendered as one static HTML file (no scripts, no external requests). It
 shows ADAs, statuses and amounts only; subjects and payee names are left out. It states its data source

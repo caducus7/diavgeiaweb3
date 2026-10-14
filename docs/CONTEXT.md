@@ -63,7 +63,7 @@ a crypto audience.
 
 ## What runs today
 
-- 20 Foundry tests, 99 vitest tests, all green.
+- 20 Foundry tests, 102 vitest tests, all green.
 - `deploy / anchor / verify / pay / award / link` against Anvil with fixtures: five real versions across four
   ADAs anchor; verify shows portal = chain = 624,252.09 EUR; tampering one amount by 36 cents is caught with
   exit 2; paying the voided act is refused with `ActVoided()`; linking the paints act against a 20,000 EUR
@@ -113,8 +113,9 @@ a crypto audience.
       multi-sponsor acts, and the issueDate time zone (SPEC §8 throws on an Athens-midnight date).
    c. Commit the recorded fixture only after checking its size and that it holds no `privateData`.
 2. A per-municipality page: anchored total, portal total, difference. The product of Phase 1 is that one number.
-   Built (`cli page`) and checked on fixtures only. Still to do: run it on live data, and pass the registry's
-   deployment block to `chainReader` on any chain but Anvil (it scans `Anchored` logs from block 0).
+   Done 2026-10-14. Live run: Athens September 2026 from the live API on Anvil, 857 acts and 923 versions
+   anchored, portal = chain = 31,826,913.98 EUR. The log scan now starts at the registry's deployment block
+   and pages in RPC-sized ranges (SPEC §6), checked on Anvil with 2-block ranges including a portal deletion.
 3. Done 2026-10-12: one derived key per organisation, registered for the VAT in Diavgeia's own
    `/organizations` record, and every act's signers checked against `/signers` (SPEC §6). Athens and Amorgos
    anchor on one chain with separate keys. Athens 2025: 4 signers, none with organisation-level signing

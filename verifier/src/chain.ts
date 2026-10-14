@@ -49,17 +49,21 @@ export interface Deployment {
   gate: Address;
   graph: Address;
   rail: Address;
+  /** Block the registry was deployed in, as a decimal string: no Anchored log can be older. */
+  deployBlock?: string;
 }
 
 export async function deploy(): Promise<Deployment> {
   const admin = wallet(ADMIN_KEY);
   const treasury = privateKeyToAccount(TREASURY_KEY).address;
 
+  let deployBlock = 0n;
   const dep = async (name: string, args: unknown[]) => {
     const { abi, bytecode } = artifact(name);
     const hash = await admin.deployContract({ abi, bytecode, args });
     const rc = await publicClient.waitForTransactionReceipt({ hash });
     if (!rc.contractAddress) throw new Error(`deploy ${name} failed`);
+    if (name === "ActRegistry") deployBlock = rc.blockNumber;
     return rc.contractAddress;
   };
 
@@ -68,7 +72,7 @@ export async function deploy(): Promise<Deployment> {
   const gate = await dep("PaymentGate", [registry, rail, treasury]);
   const graph = await dep("ProcurementGraph", [registry]);
 
-  const d: Deployment = { registry, gate, graph, rail };
+  const d: Deployment = { registry, gate, graph, rail, deployBlock: deployBlock.toString() };
   writeFileSync(DEPLOY_FILE, JSON.stringify(d, null, 2));
   return d;
 }
@@ -167,16 +171,33 @@ export function adaFromKey(key: Hex): string {
   return new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, n));
 }
 
-/** ChainReader for report.ts. Scans Anchored logs from `fromBlock` (0 on Anvil;
- *  on a real chain pass the registry's deployment block). */
-export function chainReader(dep: Deployment, fromBlock = 0n): ChainReader {
+/** Inclusive block ranges of at most `size` blocks covering from..to. */
+export function blockRanges(from: bigint, to: bigint, size: bigint): Array<[bigint, bigint]> {
+  if (size < 1n) throw new Error(`block range size must be at least 1, got ${size}`);
+  const out: Array<[bigint, bigint]> = [];
+  for (let a = from; a <= to; a += size) out.push([a, a + size - 1n < to ? a + size - 1n : to]);
+  return out;
+}
+
+/** Hosted RPCs cap eth_getLogs ranges (commonly 10,000 blocks or fewer); LOG_BLOCK_RANGE overrides. */
+const LOG_BLOCK_RANGE = BigInt(process.env.LOG_BLOCK_RANGE ?? "10000");
+
+/** ChainReader for report.ts. Scans Anchored logs from the registry's deployment block (0 for a
+ *  deployment.json written before it was recorded: slower, never wrong) to a block pinned at the start, in
+ *  ranges an RPC will serve. */
+export function chainReader(dep: Deployment): ChainReader {
+  const fromBlock = BigInt(dep.deployBlock ?? "0");
   return {
     versions: (ada) => readVersions(dep, ada),
     async anchoredAdas() {
-      const logs = await publicClient.getContractEvents({
-        address: dep.registry, abi: artifact("ActRegistry").abi, eventName: "Anchored", fromBlock, toBlock: "latest",
-      });
-      const keys = new Set(logs.map((l) => (l as unknown as { args: { ada: Hex } }).args.ada));
+      const head = await publicClient.getBlockNumber();
+      const keys = new Set<Hex>();
+      for (const [a, b] of blockRanges(fromBlock, head, LOG_BLOCK_RANGE)) {
+        const logs = await publicClient.getContractEvents({
+          address: dep.registry, abi: artifact("ActRegistry").abi, eventName: "Anchored", fromBlock: a, toBlock: b,
+        });
+        for (const l of logs) keys.add((l as unknown as { args: { ada: Hex } }).args.ada);
+      }
       return [...keys].map(adaFromKey);
     },
   };

@@ -27,10 +27,10 @@ export interface ChainReader {
   anchoredAdas(): Promise<string[]>;
 }
 
-export type Status = "ok" | "void" | "unanchored" | "chain-behind" | "mismatch" | "chain-ahead" | "portal-missing" | "history-error";
+export type Status = "ok" | "void" | "unanchored" | "chain-behind" | "mismatch" | "chain-ahead" | "portal-missing" | "history-error" | "foreign-anchor";
 
 /** Statuses that mean the portal and the chain disagree about published content. */
-export const ALARM: ReadonlySet<Status> = new Set(["mismatch", "chain-ahead", "portal-missing", "history-error"]);
+export const ALARM: ReadonlySet<Status> = new Set(["mismatch", "chain-ahead", "portal-missing", "history-error", "foreign-anchor"]);
 
 export interface Finding {
   ada: string;
@@ -88,7 +88,10 @@ export async function versionsOf(client: DiavgeiaClient, latest: DiavgeiaDecisio
   for (const v of ordered) {
     if (v.versionId === latest.versionId) { out.push(latest); continue; }
     const d = await client.decisionVersion(v.versionId);
-    // The anchor's payer is the publishing organisation, so every version must be that organisation's.
+    // The anchor's payer is the publishing organisation, so every version must be that organisation's act.
+    if (d && d.ada.normalize("NFC") !== latest.ada.normalize("NFC")) {
+      throw new PortalInconsistentError(latest.ada, `version ${v.versionId} is of ADA ${d.ada}`);
+    }
     if (d && d.organizationId !== latest.organizationId) {
       throw new PortalInconsistentError(latest.ada, `version ${v.versionId} belongs to org ${d.organizationId}, the act to org ${latest.organizationId}`);
     }
@@ -107,6 +110,14 @@ export function anchorBlocker(last: { voided: boolean } | null): string | null {
   return null;
 }
 
+/** Why an act's on-chain history is not this organisation's, or null. The registry does not tie an ADA to an
+ *  organisation: any registered signer can anchor any ADA under its own VAT. An anchor of this org's act under
+ *  another VAT claims another publisher, so the report raises it and `anchor` does not append to it. */
+export function foreignAnchor(onChain: ReadonlyArray<{ payerVat: bigint }>, orgVat: bigint): string | null {
+  const i = onChain.findIndex((v) => v.payerVat !== orgVat);
+  return i < 0 ? null : `version ${i + 1} on chain is anchored under VAT ${onChain[i].payerVat}, not this organisation's`;
+}
+
 const typedPayer = (d: DiavgeiaDecision): bigint => vatToUint(d.extraFieldValues?.org?.afm ?? "");
 
 /** A --vat given in place of the organisation record is the VAT every anchor will carry, and the VAT the org's
@@ -115,8 +126,9 @@ const typedPayer = (d: DiavgeiaDecision): bigint => vatToUint(d.extraFieldValues
  *  with under 3 typed payers only needs one to agree. No typed payer at all leaves nothing to check against. */
 export function checkFallbackVat(acts: DiavgeiaDecision[], org: string, vat: string): void {
   const typed = acts.map(typedPayer).filter((v) => v !== 0n);
-  if (!acts.length) return;
   const fix = "use a source with the organisation record (record the window again)";
+  // An empty window checks nothing, yet the VAT would still filter the portal-missing scan (or be registered).
+  if (!acts.length) throw new Error(`no org ${org} acts in this window to check --vat ${vat} against; ${fix}`);
   if (!typed.length) throw new Error(`no org ${org} act in this window types a payer VAT, so --vat ${vat} cannot be checked; ${fix}`);
   const matching = typed.filter((v) => v === vatToUint(vat)).length;
   if (typed.length >= 3 ? matching * 2 < typed.length : matching === 0) {
@@ -155,7 +167,9 @@ export async function buildReport(client: DiavgeiaClient, chain: ChainReader, p:
     if (!voided) portalTotal += portalCents;
     const onChain = await chain.versions(l.ada);
     const last = onChain.length ? onChain[onChain.length - 1] : null;
-    if (last && !last.voided) chainTotal += last.amountCents;
+    const foreign = foreignAnchor(onChain, orgVat);
+    // Another organisation's anchor is not this organisation's chain total, as in the portal-missing scan.
+    if (last && !last.voided && !foreign) chainTotal += last.amountCents;
 
     const f = (status: Status, detail: string) =>
       findings.push({ ada: l.ada, status, detail, portalCents, chainCents: last ? last.amountCents : null });
@@ -170,6 +184,7 @@ export async function buildReport(client: DiavgeiaClient, chain: ChainReader, p:
     }
 
     if (!last) { f("unanchored", `portal has ${vs.length} version(s), chain has none`); continue; }
+    if (foreign) { f("foreign-anchor", foreign); continue; }
 
     // Compare position by position. The chain may lag the portal (a version not
     // yet anchored) but must never disagree with it on a version both hold.

@@ -30,9 +30,10 @@ const LABEL: Record<Status, string> = {
   "chain-ahead": "portal lost a version",
   "portal-missing": "anchored, gone from portal",
   "history-error": "portal contradicts itself",
+  "foreign-anchor": "anchored by another organisation",
 };
 
-const ORDER: Status[] = ["mismatch", "chain-ahead", "portal-missing", "history-error", "chain-behind", "unanchored", "void", "ok"];
+const ORDER: Status[] = ["mismatch", "foreign-anchor", "chain-ahead", "portal-missing", "history-error", "chain-behind", "unanchored", "void", "ok"];
 
 const cents = (c: bigint | null) => (c === null ? "&ndash;" : esc(formatEur(c)));
 
@@ -83,7 +84,7 @@ h1 { font-size:1.4rem; margin:0 0 4px; } .sub { color:var(--mute); margin:0 0 24
 .verdict.bad { color:var(--bad); } .verdict.good { color:var(--good); }
 .scroll { overflow-x:auto; } table { border-collapse:collapse; width:100%; font-size:.9rem; }
 th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; } td.n { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
-tr.s-mismatch td:nth-child(2), tr.s-chain-ahead td:nth-child(2), tr.s-portal-missing td:nth-child(2), tr.s-history-error td:nth-child(2) { color:var(--bad); font-weight:600; }
+tr.s-mismatch td:nth-child(2), tr.s-foreign-anchor td:nth-child(2), tr.s-chain-ahead td:nth-child(2), tr.s-portal-missing td:nth-child(2), tr.s-history-error td:nth-child(2) { color:var(--bad); font-weight:600; }
 tr.s-chain-behind td:nth-child(2), tr.s-unanchored td:nth-child(2) { color:var(--warn); }
 a { color:inherit; } ul { color:var(--mute); padding-left:20px; } footer { color:var(--mute); font-size:.8rem; margin-top:24px; word-break:break-all; }
 </style>
