@@ -12,7 +12,7 @@
 import { readFileSync } from "node:fs";
 import type { DiavgeiaDecision } from "./canonical.js";
 import {
-  parseDecision, parseSearchPage, parseVersionLog, parseIsoDay, athensDay, parseOrganization, parseSigner, PortalInconsistentError,
+  parseDecision, parseSearchPage, parseVersionLog, parseIsoDay, athensDay, isAthensMidnightOf, parseOrganization, parseSigner, PortalInconsistentError,
   SignerDataUnavailable, type OrganizationRecord, type SignerRecord,
 } from "./validate.js";
 
@@ -126,8 +126,13 @@ export class LiveClient implements DiavgeiaClient {
         const j = parseSearchPage(body, `search ${from}..${to} page ${page}`);
         total ??= j.total;
         const before = windowVersions.size;
+        const next = iso(Date.parse(to) + DAY);
         for (const d of j.decisions) {
           const why = outsideQuery(d, p, from, to);
+          // The range is inclusive at both ends (`issueDate:[DT(from 00:00 Athens) TO DT(to+1 00:00 Athens)]`), so
+          // a body that stores issueDate at Athens midnight (Piraeus 2025) also gets the next day's acts here. They
+          // belong to the next day: counted for paging, not returned. Verified 2026-10-14 (SPEC §7).
+          if (why && isAthensMidnightOf(d.issueDate, next) && !outsideQuery(d, p, from, next)) { windowVersions.add(d.versionId); continue; }
           if (why) throw new Error(`diavgeia: ${why}`);
           windowVersions.add(d.versionId);
           out.push(d);

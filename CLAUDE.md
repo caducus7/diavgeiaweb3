@@ -45,8 +45,9 @@ Unset `DIAVGEIA_FIXTURE` to use the live API at https://diavgeia.gov.gr/opendata
   `HTTPS_PROXY`: run live commands with `NODE_USE_ENV_PROXY=1` (Node >= 22.21), or they fail with
   `fetch failed (ENOTFOUND)` even when curl works. Verified 2026-10-11 once diavgeia.gov.gr was allowlisted.
 - Anvil default account 0 key ends in `...d7bf4f2ff80`. A typo here cost an hour once.
-- Anvil keeps each instance's chain state in `~/.foundry/anvil/tmp` and does not clean it up. A day of year-long
-  runs filled the session's disk allowance (about 30 GB). After `kill $(pgrep -x anvil)`, `rm -rf
+- Anvil keeps each instance's chain state in `~/.foundry/anvil/tmp` and does not clean it up, about 2 MB per
+  anchor (15 GB for Thessaloniki 2025's 7,351). A day of year-long runs filled the session's disk allowance
+  (about 30 GB). Use a fresh Anvil per organisation-year. After `kill $(pgrep -x anvil)`, `rm -rf
   ~/.foundry/anvil/tmp`. Never `pkill -f` a pattern that appears in your own command line: it kills the shell.
 
 ## Rules

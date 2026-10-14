@@ -218,7 +218,10 @@ Heuristics, flagged as such in code:
 - `to_issue_date` excludes that day (verified 2026-10-11). `info.query` shows the range is run as
   `issueDate:[DT(from 00:00 Athens) TO DT(to 00:00 Athens)]` while `issueDate` is stored at 00:00 UTC, so acts
   issued on `to` fall outside: 2025-03-31..2025-03-31 returns 0 acts, 2025-03-31..2025-04-01 returns the 25 of
-  31 March. The client sends `to + 1 day`.
+  31 March. The client sends `to + 1 day`. The range is inclusive at both ends (verified 2026-10-14): for a
+  body that stores `issueDate` at Athens midnight (Piraeus), 2025-03-31..2025-04-01 returns the 26 acts of 31
+  March and the 25 of 1 April, which 2025-04-01..2025-04-02 returns too. The client counts an act exactly at
+  the upper bound for paging and drops it: it belongs to the next day.
 - `issueDate` is 00:00 UTC on all but one of 5,667 Athens 2025 versions (one at 06:54 UTC). Piraeus 2025
   stores some at Athens midnight (21:00 or 22:00 UTC the day before), which the API returns for the Athens
   day. The window check therefore uses the Athens day (§8). The canonical `issueDay` and the anchor's

@@ -157,6 +157,8 @@ const ATHENS_DAY = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Athens",
 /** The Athens calendar day of an instant, as YYYY-MM-DD. The search API windows by Athens day (SPEC §7); most
  *  bodies store issueDate at 00:00 UTC (the same Athens day), some at Athens midnight (Piraeus 2025). */
 export const athensDay = (ms: number): string => ATHENS_DAY.format(new Date(ms));
+/** True when `ms` is exactly 00:00 Athens time on `day` (YYYY-MM-DD). */
+export const isAthensMidnightOf = (ms: number, day: string): boolean => athensDay(ms) === day && athensDay(ms - 1) !== day;
 
 /** The fields of `/organizations/{uid}.json` the verifier uses. */
 export interface OrganizationRecord { uid: string; label: string; vatNumber: string; [k: string]: unknown }

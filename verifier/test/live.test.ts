@@ -388,6 +388,20 @@ describe("code review fixes", () => {
     await expect(live(withExtra("2025-11-22T22:00:00Z")).search(q)).rejects.toThrow(/TZ-1 issued 2025-11-22T22:00:00.000Z \(Athens day 2025-11-23\)/);
   });
 
+  it("the API's upper bound is inclusive: an act at Athens midnight of the day after `to` is counted for paging but not returned (Piraeus 2025)", async () => {
+    const nextDay = { ...paints, ada: "TZ-2", versionId: "tz-2", issueDate: Date.parse("2025-11-30T22:00:00Z") }; // 00:00 Athens, 1 December
+    const { f: base } = mockApi(fx.decisions, fx.versionlog);
+    const f = (async (u: URL) => {
+      const r = await base(u);
+      if (!String(u).includes("search.json")) return r;
+      const b = await r.json(); b.decisions.push(nextDay); b.info.total++; b.info.actualSize++;
+      return json(b);
+    }) as unknown as typeof fetch;
+    const got = await live(f).search({ org: "6013", type: "Β.2.2", fromIssueDate: "2025-11-24", toIssueDate: "2025-11-30" });
+    expect(got.map((d) => d.ada)).not.toContain("TZ-2");
+    expect(got.length).toBe(4); // every fixture act, nothing lost to the paging check
+  });
+
   it("#7 org: null is accepted, as the canonical form already handles it", () => {
     expect(() => parseDecision({ ...paints, extraFieldValues: { ...paints.extraFieldValues, org: null } })).not.toThrow();
   });
