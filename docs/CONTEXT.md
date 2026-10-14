@@ -94,6 +94,12 @@ Thessaloniki 6114, Piraeus 6243, Patras 6241, Heraklion (Crete) 6325 and Larissa
   none of the signers in any of the seven bodies holds organisation-level signing rights. No signer issues.
 - The payer decision mattered: Larissa types no payer on 7,560 of 7,635 acts.
 - Anvil keeps about 2 MB of state per anchor (15 GB for Thessaloniki): one fresh Anvil per organisation-year.
+- **Rerun 2026-10-14 with itemised bills summed** (SPEC §4). Totals in the table above are under the old
+  first-line rule. Now, each matching an independent computation from the recording to the cent:
+  Thessaloniki portal 174,831,937.86 EUR (difference -5,945.57, the same two acts: 4,029.59 counted on the
+  portal side only for the history-error act, 9,975.16 on the chain side only for ΡΙ2ΥΩΡ5-2Ρ4's anchored v1);
+  Piraeus 131,810.85; Patras 90,885,721.63; Larissa 97,034,335.06, with 5 acts split between payees leaving
+  out 248,306.34. Portal = chain in the last three. Heraklion and Athens have no multi-line acts.
 
 ## What runs today
 
