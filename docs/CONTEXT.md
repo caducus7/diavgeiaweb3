@@ -59,7 +59,7 @@ a crypto audience.
   the first rule v3 was refused and v4 blocked behind it; now all four versions anchor.
 - 6Γ5ΛΩ6Μ-ΔΒΡ (April 2025 payroll): voided in v2, un-voided in v3. The registry accepts nothing after a void,
   so the chain keeps it voided while the portal shows it live. 1 of 35 voided acts. Open question below.
-- No multi-payee and no non-EUR acts in 2025. The multi-payee question is not urgent for Athens Β.2.2.
+- No multi-payee and no non-EUR acts in 2025 in Athens. Other bodies have many (see the five municipalities below).
 
 ## Findings from five more municipalities (2025, Β.2.2, recorded 2026-10-14)
 
@@ -97,7 +97,7 @@ Thessaloniki 6114, Piraeus 6243, Patras 6241, Heraklion (Crete) 6325 and Larissa
 
 ## What runs today
 
-- 22 Foundry tests, 114 vitest tests, all green.
+- 22 Foundry tests, 119 vitest tests, all green.
 - `deploy / anchor / verify / pay / award / link` against Anvil with fixtures: five real versions across four
   ADAs anchor; verify shows portal = chain = 624,252.09 EUR; tampering one amount by 36 cents is caught with
   exit 2; paying the voided act is refused with `ActVoided()`; linking the paints act against a 20,000 EUR
@@ -117,13 +117,14 @@ Thessaloniki 6114, Piraeus 6243, Patras 6241, Heraklion (Crete) 6325 and Larissa
       which weakens public verifiability.
 - [ ] Signer key custody: issuance, revocation, post changes. The Diavgeia signer registry is the obvious
       identity source; its accuracy is unknown.
-- [ ] Multi-payee acts: the anchor exposes only the first sponsor (SPEC §4). Decide whether to hash a
-      Merkle root of payees or to emit one anchor per payee. **Data 2026-10-14:** 1,936 of 1,941 multi-line
-      acts in five municipalities repeat one payee; the first-payee rule misses 18-21% of the money in
-      Thessaloniki and Larissa. Summing the lines when they share a payee would cover 99.7% of cases without
-      a struct change, but changes what `amountCents` means.
-- [ ] Unsupported amounts (13 acts in 2025): negative credit lines and float residues. Keep rejecting
-      (current), or define them in a canonical form v2 (signed amounts, or netting lines per payee)?
+- [x] Multi-line acts. **Decided 2026-10-14 by the project owner:** when every line names one payee in one
+      currency, the anchor's `amountCents` is their sum (SPEC §4). Reason: 1,936 of 1,941 multi-line acts in
+      five municipalities repeat one payee, and the first-line rule missed 18-21% of the money in
+      Thessaloniki and Larissa. Still open: the 5 acts that split a payment between payees (Larissa) expose
+      only their first line; a Merkle root of payees or one anchor per payee would cover them.
+- [x] Unsupported amounts (13 acts in 2025: negative credit lines, float residues where 0.00 was meant).
+      **Decided 2026-10-14 by the project owner:** keep rejecting them, scoped to their act (`unsupported`,
+      SPEC §6). No canonical v2 for now.
 - [ ] Who at the Ministry of Digital Governance owns the Β.2.2 field list, and what making KAE and CPV
       mandatory would take.
 - [ ] Un-voiding: the registry treats a void as final (`AlreadyVoided`), but the portal un-voided one 2025

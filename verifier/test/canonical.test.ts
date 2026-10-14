@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import {
-  actHash, adaKey, actTypeKey, canonicalise, contractRefFromSubject, isVoid, stableStringify, toCents, unixDay,
+  actHash, adaKey, actTypeKey, anchorPayment, canonicalise, contractRefFromSubject, isVoid, stableStringify, toCents, unixDay,
   type DiavgeiaDecision,
 } from "../src/canonical.js";
 import { splitWindows, FixtureClient } from "../src/diavgeia.js";
@@ -25,6 +25,26 @@ describe("toCents", () => {
     expect(() => toCents(5.68434e-14)).toThrow(/more than two decimals/); // Heraklion: a float residue for 0.00
     expect(() => toCents(-1267.94)).toThrow(/negative/); // Thessaloniki: a credit line
     expect(() => toCents(-0.01)).toThrow(/negative/); // Patras
+  });
+});
+
+describe("anchorPayment", () => {
+  const act = (lines: Array<[string, number | undefined, string?]>) => ({
+    extraFieldValues: { sponsor: lines.map(([afm, amount, currency]) => ({ sponsorAFMName: { afm }, expenseAmount: { amount, currency: currency ?? "EUR" } })) },
+  }) as never;
+  it("sums the lines of an itemised bill to one payee", () => {
+    expect(anchorPayment(act([["997998048", 1515.99], ["997998048", 248.05], ["997998048", undefined]]))).toEqual({ payeeVat: 997998048n, amountCents: 176404n, split: false });
+  });
+  it("counts the first line of a payment split between payees, or across currencies, and says so", () => {
+    expect(anchorPayment(act([["1", 10], ["2", 20]]))).toEqual({ payeeVat: 1n, amountCents: 1000n, split: true });
+    expect(anchorPayment(act([["1", 10], ["1", 20, "USD"]]))).toEqual({ payeeVat: 1n, amountCents: 1000n, split: true });
+  });
+  it("compares payees as the anchor stores them, and handles no lines", () => {
+    expect(anchorPayment(act([["090025537", 1], ["90025537", 2]])).split).toBe(false);
+    expect(anchorPayment({ extraFieldValues: {} } as never)).toEqual({ payeeVat: 0n, amountCents: 0n, split: false });
+  });
+  it("refuses an unsupported line like toCents", () => {
+    expect(() => anchorPayment(act([["1", 10], ["1", -1267.94]]))).toThrow(/negative/);
   });
 });
 

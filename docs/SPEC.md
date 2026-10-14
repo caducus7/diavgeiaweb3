@@ -71,7 +71,8 @@ bytes8  actType      see 3
 uint64  payerVat     the publishing organisation's VAT (`vatNumber` of /organizations/{uid}), numeric,
                      leading zeros dropped (090025537 -> 90025537). Not the typed payer: see below
 uint64  payeeVat     first sponsor's AFM, 0 if none
-uint128 amountCents  first sponsor's amount in cents, 0 if none
+uint128 amountCents  the sum of all sponsors' amounts in cents when every sponsor has the same payeeVat (as
+                     stored, so 090025537 = 90025537) and currency; otherwise the first sponsor's; 0 if none
 uint32  issueDate    unix day
 bytes32 prevAnchor   actHash of the previous version, 0 for a first version
 bytes32 contractRef  KIMDIS id packed, 0 if none found
@@ -89,8 +90,12 @@ signer can anchor any ADA under its own VAT. `verify` therefore raises an act of
 under another VAT (`foreign-anchor`), and `anchor` does not append to it. Before 2026-10-12 `payerVat` was the typed payer and acts without the
 org's typed VAT could not be anchored; no anchors from that rule exist outside throwaway Anvil chains.
 
-Known limitation: acts with more than one sponsor commit to all of them in `actHash` but expose only the
-first on-chain. PaymentGate therefore handles single-payee acts only. Multi-payee support is an open item.
+Multi-line acts (decided 2026-10-14): every sponsor line is in `actHash`. Lines that all name one payee in
+one currency are one payment itemised (1,936 of 1,941 multi-line acts in five municipalities in 2025, up to
+145 lines), so the anchor carries their sum and PaymentGate releases the whole bill. Known limitation: a
+payment split between payees (5 acts, all Larissa 2025) exposes only its first line on-chain; `verify`
+counts such acts and the amount left out. Before 2026-10-14 `amountCents` was always the first line; no
+anchors from that rule exist outside throwaway Anvil chains.
 
 ## 5. Contracts
 

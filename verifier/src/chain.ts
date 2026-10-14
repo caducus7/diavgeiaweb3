@@ -12,7 +12,7 @@ import {
 import { privateKeyToAccount } from "viem/accounts";
 import { foundry } from "viem/chains";
 import {
-  actHash, adaKey, actTypeKey, contractRefFromSubject, contractRefKey, isVoid, toCents, unixDay, vatToUint,
+  actHash, adaKey, actTypeKey, anchorPayment, contractRefFromSubject, contractRefKey, isVoid, unixDay, vatToUint,
   type DiavgeiaDecision,
 } from "./canonical.js";
 import type { ChainReader } from "./report.js";
@@ -117,13 +117,13 @@ export interface AnchorStruct {
 /** `orgVat` is the publishing organisation's VAT (its /organizations record), not the typed payer, which acts
  *  often leave empty or get wrong. The typed payer is still in actHash (SPEC §2, §4). */
 export function toAnchor(d: DiavgeiaDecision, prevAnchor: Hex, orgVat: string): AnchorStruct {
-  const sponsor = d.extraFieldValues?.sponsor?.[0];
+  const { payeeVat, amountCents } = anchorPayment(d);
   return {
     actHash: actHash(d),
     actType: actTypeKey(d.decisionTypeId),
     payerVat: vatToUint(orgVat),
-    payeeVat: vatToUint(sponsor?.sponsorAFMName?.afm ?? ""),
-    amountCents: toCents(sponsor?.expenseAmount?.amount),
+    payeeVat,
+    amountCents,
     issueDate: unixDay(d.issueDate),
     prevAnchor,
     contractRef: contractRefKey(contractRefFromSubject(d.subject)),

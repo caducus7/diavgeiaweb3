@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, writeFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { actHash, isVoid, toCents, unixDay, vatToUint, adaKey, type DiavgeiaDecision } from "../src/canonical.js";
+import { actHash, anchorPayment, isVoid, unixDay, vatToUint, adaKey, type DiavgeiaDecision } from "../src/canonical.js";
 import { FixtureClient } from "../src/diavgeia.js";
 import { buildReport, checkFallbackVat, formatEur, versionsOf, type ChainReader, type ChainVersion, type ReportParams } from "../src/report.js";
 import { renderPage } from "../src/page.js";
@@ -16,7 +16,7 @@ const quiet = () => {};
 const anchorOf = (d: DiavgeiaDecision): ChainVersion => ({
   actHash: actHash(d),
   payerVat: vatToUint(P.orgVat), // as `anchor` writes it: the org's VAT, whatever the act types
-  amountCents: toCents(d.extraFieldValues?.sponsor?.[0]?.expenseAmount?.amount),
+  amountCents: anchorPayment(d).amountCents, // as `anchor` writes it
   issueDate: unixDay(d.issueDate),
   voided: isVoid(d.subject),
 });
@@ -277,7 +277,7 @@ describe("buildReport", () => {
     const c = clientWith((f) => {
       const v1 = f.decisions[0];
       const v2 = { ...JSON.parse(JSON.stringify(v1)), versionId: "two-lines-2", correctedVersionId: v1.versionId };
-      v2.extraFieldValues.sponsor.push({ ...v2.extraFieldValues.sponsor[0], expenseAmount: { amount: 50, currency: "EUR" } });
+      v2.extraFieldValues.sponsor.push({ sponsorAFMName: { afm: "999999999", name: "B" }, expenseAmount: { amount: 50, currency: "EUR" } });
       v1.extraFieldValues.sponsor[0].expenseAmount.amount = -1;
       f.decisions.push(v2);
       f.versionlog[v1.ada] = { ada: v1.ada, versions: [
@@ -287,7 +287,8 @@ describe("buildReport", () => {
     const r = await buildReport(c, reader(new Map()), P);
     expect(r.findings.find((x) => x.ada === "9ΓΒΝΩ6Μ-Λ4Η")!.status).toBe("unsupported");
     expect(r.multiPayee).toBe(1);
-    expect(r.beyondFirstPayee).toBe(0n);
+    expect(r.splitPayee).toBe(0);
+    expect(r.splitUncounted).toBe(0n);
   });
 
   it("portal-missing at the window's edges reads the anchor's UTC day as either Athens day (Piraeus 2025 stores Athens midnight)", async () => {
@@ -320,16 +321,28 @@ describe("buildReport", () => {
     expect(r.alarm).toBe(true);
   });
 
-  it("sums the payee lines after the first, which neither total counts (Thessaloniki, Larissa 2025)", async () => {
+  it("an itemised bill (every line one payee) counts in full; anchored, portal = chain (Thessaloniki, Larissa 2025)", async () => {
     const c = clientWith((f) => {
       const s = f.decisions[0].extraFieldValues.sponsor;
       s.push({ ...s[0], expenseAmount: { amount: 100.5, currency: "EUR" } }, { ...s[0], expenseAmount: { amount: 0.25, currency: "EUR" } });
     });
-    const r = await buildReport(c, reader(new Map()), P);
+    const r = await buildReport(c, reader(await fullyAnchored(c)), P);
     expect(r.multiPayee).toBe(1);
-    expect(r.beyondFirstPayee).toBe(10075n);
+    expect(r.splitPayee).toBe(0);
     expect(r.acts).toBe(4);
-    expect(r.portalTotal).toBe(62425209n); // the first payee only, as before
+    expect(r.portalTotal).toBe(62425209n + 10075n);
+    expect(r.difference).toBe(0n);
+  });
+
+  it("a payment split between payees counts its first line and reports the rest (Larissa 2025: 5 acts)", async () => {
+    const c = clientWith((f) => {
+      f.decisions[0].extraFieldValues.sponsor.push({ sponsorAFMName: { afm: "999999999", name: "B" }, expenseAmount: { amount: 100.5, currency: "EUR" } });
+    });
+    const r = await buildReport(c, reader(await fullyAnchored(c)), P);
+    expect(r.splitPayee).toBe(1);
+    expect(r.splitUncounted).toBe(10050n);
+    expect(r.portalTotal).toBe(62425209n);
+    expect(r.difference).toBe(0n);
   });
 
   it("counts non-void acts with no amount, which neither total can see", async () => {

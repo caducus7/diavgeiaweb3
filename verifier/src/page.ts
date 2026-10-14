@@ -58,8 +58,9 @@ export function renderPage(r: Report, m: PageMeta): string {
     m.source === "fixture"
       ? `Data source: a saved fixture (${esc(basename(m.fixturePath ?? ""))}), not the live portal. The live OpenData API was not queried for this page.`
       : "Data source: the live Diavgeia OpenData API at the time shown below.",
-    "Totals count the first payee of each act only, matching what the on-chain anchor exposes."
-      + (r.multiPayee ? ` <strong>${r.multiPayee} act(s) in this window have more than one payee line; the lines after the first add ${esc(formatEur(r.beyondFirstPayee))} that neither total shows.</strong>` : ""),
+    "Totals count what the on-chain anchor exposes: the sum of an act's lines when they all name one payee (an itemised bill), the first line otherwise."
+      + (r.multiPayee ? ` ${r.multiPayee} act(s) in this window have more than one line.` : "")
+      + (r.splitPayee ? ` <strong>${r.splitPayee} act(s) split the payment between payees; the lines after the first add ${esc(formatEur(r.splitUncounted))} that neither total shows.</strong>` : ""),
     r.nonEur ? `<strong>${r.nonEur} act(s) carry a non-EUR amount and are summed as if EUR.</strong>` : "",
     r.counts.unsupported ? `<strong>${r.counts.unsupported} act(s) carry an amount the canonical form cannot represent</strong> (negative, as on a credit line; sub-cent, as with a rounding residue; or above 1e12 EUR). They are not anchored and their amounts are in neither total.` : "",
     r.noAmount ? `${r.noAmount} act(s) carry no amount at all (payroll orders, for one) and are invisible in both totals.` : "",
