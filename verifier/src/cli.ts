@@ -161,6 +161,7 @@ async function cmdVerify() {
     console.log(`\n  portal total (non-void)  ${eur(r.portalTotal)}\n  chain total  (non-void)  ${eur(r.chainTotal)}\n  difference               ${eur(r.difference)}`);
     console.log(`  ${Object.entries(r.counts).map(([k, v]) => `${k}=${v}`).join("  ")}`);
     if (r.multiPayee) console.log(`  note: ${r.multiPayee} act(s) with more than one line, summed when they name one payee`);
+    if (r.multiNoPayee) console.log(`  note: ${r.multiNoPayee} multi-line act(s) name no payee (payroll, remittances), ${eur(r.multiNoPayeeCents)} in both totals`);
     if (r.splitPayee) console.log(`  note: ${r.splitPayee} act(s) split between payees; totals count the first line only, missing ${eur(r.splitUncounted)} (portal side)`);
     if (r.noAmount) console.log(`  note: ${r.noAmount} of ${r.acts} act(s) state no amount; neither total sees them`);
     console.log(`  signers: ${r.signers.map((s) => `${s.id} (${s.acts} acts, org-level rights ${s.orgSignRights === null ? "unknown" : s.orgSignRights ? "yes" : "no"})`).join(", ") || "none"}`);

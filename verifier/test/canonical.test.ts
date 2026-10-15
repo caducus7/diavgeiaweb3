@@ -33,15 +33,21 @@ describe("anchorPayment", () => {
     extraFieldValues: { sponsor: lines.map(([afm, amount, currency]) => ({ sponsorAFMName: { afm }, expenseAmount: { amount, currency: currency ?? "EUR" } })) },
   }) as never;
   it("sums the lines of an itemised bill to one payee", () => {
-    expect(anchorPayment(act([["997998048", 1515.99], ["997998048", 248.05], ["997998048", undefined]]))).toEqual({ payeeVat: 997998048n, amountCents: 176404n, split: false });
+    expect(anchorPayment(act([["997998048", 1515.99], ["997998048", 248.05], ["997998048", undefined]]))).toEqual({ payeeVat: 997998048n, amountCents: 176404n, split: false, noPayee: false });
   });
   it("counts the first line of a payment split between payees, or across currencies, and says so", () => {
-    expect(anchorPayment(act([["1", 10], ["2", 20]]))).toEqual({ payeeVat: 1n, amountCents: 1000n, split: true });
-    expect(anchorPayment(act([["1", 10], ["1", 20, "USD"]]))).toEqual({ payeeVat: 1n, amountCents: 1000n, split: true });
+    expect(anchorPayment(act([["1", 10], ["2", 20]]))).toEqual({ payeeVat: 1n, amountCents: 1000n, split: true, noPayee: false });
+    expect(anchorPayment(act([["1", 10], ["1", 20, "USD"]]))).toEqual({ payeeVat: 1n, amountCents: 1000n, split: true, noPayee: false });
+  });
+  it("sums lines that name no payee (payroll, remittances: 994 acts in 2025) and says so", () => {
+    expect(anchorPayment(act([["", 10], ["", 20]]))).toEqual({ payeeVat: 0n, amountCents: 3000n, split: false, noPayee: true });
+  });
+  it("treats an empty currency as EUR, as the canonical form does", () => {
+    expect(anchorPayment(act([["1", 10, ""], ["1", 20, "EUR"]])).split).toBe(false);
   });
   it("compares payees as the anchor stores them, and handles no lines", () => {
     expect(anchorPayment(act([["090025537", 1], ["90025537", 2]])).split).toBe(false);
-    expect(anchorPayment({ extraFieldValues: {} } as never)).toEqual({ payeeVat: 0n, amountCents: 0n, split: false });
+    expect(anchorPayment({ extraFieldValues: {} } as never)).toEqual({ payeeVat: 0n, amountCents: 0n, split: false, noPayee: true });
   });
   it("refuses an unsupported line like toCents", () => {
     expect(() => anchorPayment(act([["1", 10], ["1", -1267.94]]))).toThrow(/negative/);

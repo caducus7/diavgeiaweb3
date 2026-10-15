@@ -341,6 +341,7 @@ describe("buildReport", () => {
     const r = await buildReport(c, reader(await fullyAnchored(c)), P);
     expect(r.splitPayee).toBe(1);
     expect(r.splitUncounted).toBe(10050n);
+    expect(r.multiNoPayee).toBe(0);
     expect(r.portalTotal).toBe(62425209n);
     expect(r.difference).toBe(0n);
   });
@@ -404,6 +405,15 @@ describe("blockRanges", () => {
 });
 
 describe("toAnchor", () => {
+  it("carries the sum of an itemised bill and the first line of a split payment", () => {
+    const base = fx.decisions[0] as DiavgeiaDecision;
+    const line = (afm: string | undefined, amount: number) => ({ sponsorAFMName: afm === undefined ? undefined : { afm }, expenseAmount: { amount, currency: "EUR" } });
+    const withLines = (lines: unknown[]) => ({ ...base, extraFieldValues: { ...base.extraFieldValues, sponsor: lines } }) as DiavgeiaDecision;
+    expect(toAnchor(withLines([line("997998048", 1515.99), line("997998048", 248.05)]), ZERO32, "090025537")).toMatchObject({ payeeVat: 997998048n, amountCents: 176404n });
+    expect(toAnchor(withLines([line("1", 10), line("2", 20)]), ZERO32, "090025537")).toMatchObject({ payeeVat: 1n, amountCents: 1000n });
+    expect(toAnchor(withLines([line(undefined, 10), line(undefined, 20)]), ZERO32, "090025537")).toMatchObject({ payeeVat: 0n, amountCents: 3000n });
+  });
+
   it("carries the org's VAT, not the typed payer, while the hash still commits to the typed payer", () => {
     const swapped = swappedAct(fx.decisions[0]);
     const a = toAnchor(swapped, ZERO32, "090025537");

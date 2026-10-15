@@ -8,7 +8,7 @@
  * lines the totals leave out in `splitUncounted`, so a reader knows the totals understate them.
  */
 import type { Hex } from "viem";
-import { actHash, anchorPayment, isVoid, toCents, unixDay, unsupportedAmount, vatToUint, type DiavgeiaDecision } from "./canonical.js";
+import { actHash, anchorPayment, currencyOf, isVoid, toCents, unixDay, unsupportedAmount, vatToUint, type DiavgeiaDecision } from "./canonical.js";
 import type { DiavgeiaClient } from "./diavgeia.js";
 import { parseIsoDay, isPerActError, PortalInconsistentError, SignerDataUnavailable, type SignerRecord } from "./validate.js";
 
@@ -63,6 +63,10 @@ export interface Report {
   splitPayee: number;
   /** Portal side only: the lines after the first of non-void, supported split acts, which neither total counts. */
   splitUncounted: bigint;
+  /** Non-void multi-line acts no line of which names a payee (payroll, withholding remittances): summed in both
+   *  totals, anchored with payeeVat 0. */
+  multiNoPayee: number;
+  multiNoPayeeCents: bigint;
   /** Acts the portal returned for the window. */
   acts: number;
   nonEur: number;
@@ -155,6 +159,7 @@ export async function buildReport(client: DiavgeiaClient, chain: ChainReader, p:
   if (!p.vatFromRegistry) checkFallbackVat(latest, p.org, p.orgVat);
   const findings: Finding[] = [];
   let portalTotal = 0n, chainTotal = 0n, multiPayee = 0, splitPayee = 0, nonEur = 0, noAmount = 0, splitUncounted = 0n;
+  let multiNoPayee = 0, multiNoPayeeCents = 0n;
   const payerNotes: Report["payerNotes"] = { empty: 0, other: [] };
   // The name from Diavgeia's organisation record; the typed payer name can be another party's (a swapped act).
   let orgName: string | null = (await client.organization(p.org))?.label.normalize("NFC")
@@ -166,7 +171,7 @@ export async function buildReport(client: DiavgeiaClient, chain: ChainReader, p:
     else if (typed !== orgVat) payerNotes.other.push({ ada: l.ada, typedVat: l.extraFieldValues!.org!.afm! });
     const sponsors = l.extraFieldValues?.sponsor ?? [];
     if (sponsors.length > 1) multiPayee++;
-    if (sponsors.some((s) => (s.expenseAmount?.currency ?? "EUR") !== "EUR")) nonEur++;
+    if (sponsors.some((s) => currencyOf(s) !== "EUR")) nonEur++;
     if (sponsors.every((s) => s.expenseAmount?.amount == null) && !isVoid(l.subject)) noAmount++;
 
     let vs: DiavgeiaDecision[] | null = null, historyError: string | null = null;
@@ -180,10 +185,13 @@ export async function buildReport(client: DiavgeiaClient, chain: ChainReader, p:
     // hashed or anchored (SPEC §6). The latest version's amount then counts in neither total.
     const badAt = (vs ?? [l]).findIndex((v) => unsupportedAmount(v) !== null);
     const unsupported = badAt < 0 ? null : `${vs ? `v${badAt + 1}` : "the latest version"} has ${unsupportedAmount((vs ?? [l])[badAt])}`;
-    if (badAt < 0 && anchorPayment(l).split) {
+    // Same scope as the totals: non-void acts the anchor can hold.
+    const payment = badAt < 0 && !isVoid(l.subject) ? anchorPayment(l) : null;
+    if (payment?.split) {
       splitPayee++;
-      if (!isVoid(l.subject)) for (const s of sponsors.slice(1)) splitUncounted += toCents(s.expenseAmount?.amount);
+      for (const s of sponsors.slice(1)) splitUncounted += toCents(s.expenseAmount?.amount);
     }
+    if (payment && sponsors.length > 1 && payment.noPayee && !payment.split) { multiNoPayee++; multiNoPayeeCents += payment.amountCents; }
 
     const onChain = await chain.versions(l.ada);
     const last = onChain.length ? onChain[onChain.length - 1] : null;
@@ -271,7 +279,7 @@ export async function buildReport(client: DiavgeiaClient, chain: ChainReader, p:
   const counts: Partial<Record<Status, number>> = {};
   for (const x of findings) counts[x.status] = (counts[x.status] ?? 0) + 1;
   return {
-    params: p, orgName, findings, portalTotal, chainTotal, difference: portalTotal - chainTotal, counts, multiPayee, splitPayee, splitUncounted, acts: latest.length, nonEur, noAmount, signers, signerIssues, signerChecks, payerNotes,
+    params: p, orgName, findings, portalTotal, chainTotal, difference: portalTotal - chainTotal, counts, multiPayee, splitPayee, splitUncounted, multiNoPayee, multiNoPayeeCents, acts: latest.length, nonEur, noAmount, signers, signerIssues, signerChecks, payerNotes,
     alarm: findings.some((x) => ALARM.has(x.status)),
   };
 }

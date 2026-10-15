@@ -90,11 +90,12 @@ signer can anchor any ADA under its own VAT. `verify` therefore raises an act of
 under another VAT (`foreign-anchor`), and `anchor` does not append to it. Before 2026-10-12 `payerVat` was the typed payer and acts without the
 org's typed VAT could not be anchored; no anchors from that rule exist outside throwaway Anvil chains.
 
-Multi-line acts (decided 2026-10-14): every sponsor line is in `actHash`. Lines that all name one payee in
-one currency are one payment itemised (1,936 of 1,941 multi-line acts in five municipalities in 2025, up to
-145 lines), so the anchor carries their sum and PaymentGate releases the whole bill. Known limitation: a
-payment split between payees (5 acts, all Larissa 2025) exposes only its first line on-chain; `verify`
-counts such acts and the amount left out. Before 2026-10-14 `amountCents` was always the first line; no
+Multi-line acts (decided 2026-10-14): every sponsor line is in `actHash`. Lines that all carry one payee VAT
+in one currency are summed. Of 1,941 multi-line acts in five municipalities in 2025 (corrected 2026-10-15):
+942 repeat one real payee VAT (an itemised bill, up to 145 lines); 994 name no payee on any line (payroll,
+overtime, withholding remittances), summed under `payeeVat` 0; 5 split the payment between payees (or have
+a VAT on some lines only) and expose only their first line. `verify` counts the no-payee and split acts and
+the amounts involved. Before 2026-10-14 `amountCents` was always the first line; no
 anchors from that rule exist outside throwaway Anvil chains.
 
 ## 5. Contracts
@@ -192,8 +193,9 @@ The portal-missing scan reads `Anchored` logs from the registry's deployment blo
 `page`: the same reconciliation rendered as one static HTML file (no scripts, no external requests). It
 shows ADAs, statuses and amounts only; subjects and payee names are left out. It states its data source
 (live or fixture) and the caveats on the totals. When at least a tenth of the acts state no amount it says so beside the totals.
-`verify` and `page` give the sum of the payee lines after the first (portal side, non-void, supported acts),
-which neither total counts. Same exit code as `verify`.
+`verify` and `page` count multi-line acts that name no payee (summed in both totals) and acts split between
+payees, with the sum of their lines after the first (portal side, non-void, supported acts), which neither
+total counts. Same exit code as `verify`.
 
 `anchor` skips an act whose history is a `history-error`, or whose anchored versions the portal now
 contradicts (verify's `mismatch`; it never appends to such a chain), with exit 2. It checks each version before sending it,

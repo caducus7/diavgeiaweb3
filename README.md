@@ -35,7 +35,7 @@ Needs Foundry (forge, anvil) and Node 22.
 
 ```sh
 cd contracts && forge test                      # 22 passed
-cd ../verifier && npm install && npm test       # 119 passed
+cd ../verifier && npm install && npm test       # 122 passed
 
 anvil &                                         # local chain, default accounts
 export DIAVGEIA_FIXTURE=fixtures/athens-2025-11.json   # omit to hit the live API

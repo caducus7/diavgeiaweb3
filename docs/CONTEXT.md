@@ -82,9 +82,10 @@ Thessaloniki 6114, Piraeus 6243, Patras 6241, Heraklion (Crete) 6325 and Larissa
 - Thessaloniki's difference (-5,946.43) is two acts: ΡΙ2ΥΩΡ5-2Ρ4, whose v2 adds a -1.66 line so the chain
   stops at v1, and 6ΞΒΚΩΡ5-ΛΟΕ, whose version log names a newer version than search returns (`history-error`,
   the run's one alarm).
-- **Multi-payee acts are itemised bills, not split payments.** Of 1,941 acts with more than one sponsor line
-  in the five, 1,936 name the same payee VAT on every line (up to 145 lines). Only 5, all in Larissa, pay
-  more than one party. The first-payee totals miss 31.8M EUR in Thessaloniki (18%), 20.5M in Larissa (21%)
+- **Multi-line acts** (counts corrected 2026-10-15). Of 1,941 acts with more than one sponsor line in the
+  five: 942 name the same payee VAT on every line (itemised bills, up to 145 lines); 994 name no payee on any
+  line (Thessaloniki 183, Larissa 811: payroll, overtime, withholding remittances); 5, all in Larissa, split
+  between payees or name a VAT on some lines only. The first-payee totals miss 31.8M EUR in Thessaloniki (18%), 20.5M in Larissa (21%)
   and 3.2M in Patras (3.5%): computed from the recordings, with first-payee sums that match `verify`'s portal
   totals to the cent.
 - **Many bodies leave amounts out.** Piraeus fills an amount on 7 of 3,779 payment acts, so its totals say
@@ -103,7 +104,7 @@ Thessaloniki 6114, Piraeus 6243, Patras 6241, Heraklion (Crete) 6325 and Larissa
 
 ## What runs today
 
-- 22 Foundry tests, 119 vitest tests, all green.
+- 22 Foundry tests, 122 vitest tests, all green.
 - `deploy / anchor / verify / pay / award / link` against Anvil with fixtures: five real versions across four
   ADAs anchor; verify shows portal = chain = 624,252.09 EUR; tampering one amount by 36 cents is caught with
   exit 2; paying the voided act is refused with `ActVoided()`; linking the paints act against a 20,000 EUR
@@ -124,9 +125,11 @@ Thessaloniki 6114, Piraeus 6243, Patras 6241, Heraklion (Crete) 6325 and Larissa
 - [ ] Signer key custody: issuance, revocation, post changes. The Diavgeia signer registry is the obvious
       identity source; its accuracy is unknown.
 - [x] Multi-line acts. **Decided 2026-10-14 by the project owner:** when every line names one payee in one
-      currency, the anchor's `amountCents` is their sum (SPEC §4). Reason: 1,936 of 1,941 multi-line acts in
-      five municipalities repeat one payee, and the first-line rule missed 18-21% of the money in
-      Thessaloniki and Larissa. Still open: the 5 acts that split a payment between payees (Larissa) expose
+      currency, the anchor's `amountCents` is their sum (SPEC §4). Reason given then: "1,936 of 1,941
+      multi-line acts repeat one payee". **Corrected 2026-10-15 (an error in the analysis, caught in review):**
+      942 repeat one real payee VAT; 994 name no payee on any line (payroll, overtime, withholding remittances:
+      28.6M of the 31.8M EUR added in Thessaloniki, 14.5M of 20.5M in Larissa) and are summed under payeeVat 0.
+      Whether that stands is back with the owner (below). Still open: the 5 acts that split a payment between payees (Larissa) expose
       only their first line; a Merkle root of payees or one anchor per payee would cover them.
 - [x] Unsupported amounts (13 acts in 2025: negative credit lines, float residues where 0.00 was meant).
       **Decided 2026-10-14 by the project owner:** keep rejecting them, scoped to their act (`unsupported`,

@@ -60,6 +60,7 @@ export function renderPage(r: Report, m: PageMeta): string {
       : "Data source: the live Diavgeia OpenData API at the time shown below.",
     "Totals count what the on-chain anchor exposes: the sum of an act's lines when they all name one payee (an itemised bill), the first line otherwise."
       + (r.multiPayee ? ` ${r.multiPayee} act(s) in this window have more than one line.` : "")
+      + (r.multiNoPayee ? ` ${r.multiNoPayee} of them name no payee on any line (payroll, withholding remittances); their ${esc(formatEur(r.multiNoPayeeCents))} is in both totals, but no payee is anchored.` : "")
       + (r.splitPayee ? ` <strong>${r.splitPayee} act(s) split the payment between payees; the lines after the first add ${esc(formatEur(r.splitUncounted))} that neither total shows.</strong>` : ""),
     r.nonEur ? `<strong>${r.nonEur} act(s) carry a non-EUR amount and are summed as if EUR.</strong>` : "",
     r.counts.unsupported ? `<strong>${r.counts.unsupported} act(s) carry an amount the canonical form cannot represent</strong> (negative, as on a credit line; sub-cent, as with a rounding residue; or above 1e12 EUR). They are not anchored and their amounts are in neither total.` : "",

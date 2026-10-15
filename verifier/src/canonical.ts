@@ -96,19 +96,23 @@ export function toCents(amount: number | undefined | null): bigint {
 
 export const unixDay = (ms: number): number => Math.floor(ms / 86_400_000);
 
-/** The payee and amount the anchor exposes (SPEC §4). Lines that all name one payee in one currency are one
- *  payment, itemised: the anchor carries their sum (1,936 of 1,941 multi-line acts in five municipalities in
- *  2025). Lines naming different payees, or mixing currencies, are a split payment the anchor cannot express:
- *  it carries the first line, and `split` says so. Every line stays in actHash either way. Payees are compared
- *  as the anchor stores them (vatToUint). Throws UnsupportedAmountError like toCents. */
-export function anchorPayment(d: DiavgeiaDecision): { payeeVat: bigint; amountCents: bigint; split: boolean } {
+/** A line's currency as the canonical form reads it: absent or empty is EUR. */
+export const currencyOf = (s: { expenseAmount?: { currency?: string } }): string => nfc(s.expenseAmount?.currency) || "EUR";
+
+/** The payee and amount the anchor exposes (SPEC §4). Lines that all carry one payee VAT in one currency are
+ *  summed: an itemised bill to one payee (942 multi-line acts in five municipalities in 2025), or, when no line
+ *  names a payee (`noPayee`), a lump such as payroll or withholding remittances (994). Lines naming different
+ *  payees, or mixing currencies, are a split payment the anchor cannot express: it carries the first line, and
+ *  `split` says so (5). Every line stays in actHash either way. Payees are compared as the anchor stores them
+ *  (vatToUint). Throws UnsupportedAmountError like toCents. */
+export function anchorPayment(d: DiavgeiaDecision): { payeeVat: bigint; amountCents: bigint; split: boolean; noPayee: boolean } {
   const lines = d.extraFieldValues?.sponsor ?? [];
-  if (!lines.length) return { payeeVat: 0n, amountCents: 0n, split: false };
+  if (!lines.length) return { payeeVat: 0n, amountCents: 0n, split: false, noPayee: true };
   const payee = vatToUint(lines[0].sponsorAFMName?.afm ?? "");
-  const currency = lines[0].expenseAmount?.currency ?? "EUR";
-  const split = lines.some((s) => vatToUint(s.sponsorAFMName?.afm ?? "") !== payee || (s.expenseAmount?.currency ?? "EUR") !== currency);
+  const currency = currencyOf(lines[0]);
+  const split = lines.some((s) => vatToUint(s.sponsorAFMName?.afm ?? "") !== payee || currencyOf(s) !== currency);
   const counted = split ? lines.slice(0, 1) : lines;
-  return { payeeVat: payee, amountCents: counted.reduce((t, s) => t + toCents(s.expenseAmount?.amount), 0n), split };
+  return { payeeVat: payee, amountCents: counted.reduce((t, s) => t + toCents(s.expenseAmount?.amount), 0n), split, noPayee: payee === 0n };
 }
 
 export function canonicalise(d: DiavgeiaDecision): CanonicalAct {
