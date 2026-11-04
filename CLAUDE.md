@@ -32,6 +32,9 @@ DIAVGEIA_FIXTURE=out/athens-2025.json npx tsx src/cli.ts anchor --from 2025-01-0
 
 Unset `DIAVGEIA_FIXTURE` to use the live API at https://diavgeia.gov.gr/opendata.
 
+CI (`.github/workflows/ci.yml`) runs `forge test`, `npm test` and `npm run typecheck` on every push and pull
+request. It is offline only: no Anvil runs and no live API.
+
 ## Environment notes (cloud sandboxes)
 
 - Foundry: `foundry.paradigm.xyz` may be blocked. The GitHub release works:
