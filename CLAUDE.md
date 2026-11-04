@@ -37,6 +37,10 @@ request. It is offline only: no Anvil runs and no live API.
 
 ## Environment notes (cloud sandboxes)
 
+- `.claude/hooks/session-start.sh` sets up cloud sessions: Foundry (forge, anvil) and solc 0.8.28 from their GitHub
+  releases into `~/.local/diavgeia-tools` (on `PATH`, with `FOUNDRY_SOLC` set), and `npm install` in `verifier/`.
+  The manual steps below are the fallback.
+
 - Foundry: `foundry.paradigm.xyz` may be blocked. The GitHub release works:
   `https://github.com/foundry-rs/foundry/releases/download/stable/foundry_stable_linux_amd64.tar.gz`.
 - solc: `binaries.soliditylang.org` may be blocked. Download
