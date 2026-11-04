@@ -55,6 +55,11 @@ request. It is offline only: no Anvil runs and no live API.
 
 ## Rules
 
+- Standing approval from the project owner (2026-11-04): once `forge test` and `npm test` are green and the
+  work is pushed to the working branch, fast-forward `main` to it without asking. Never force-push `main`;
+  if it cannot fast-forward, stop and say why. Decisions about the spec, contracts' semantics or the open
+  questions in CONTEXT.md still go to the owner.
+
 - `forge test` and `npm test` green before any commit. The pinned hash test in `verifier/test/canonical.test.ts`
   is the spec: if it fails, you changed the canonical form. Either revert, or bump `CANONICAL_VERSION`,
   update `docs/SPEC.md`, and say in the commit that all prior anchors are invalidated.
