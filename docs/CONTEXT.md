@@ -108,6 +108,10 @@ Thessaloniki 6114, Piraeus 6243, Patras 6241, Heraklion (Crete) 6325 and Larissa
   every 2025 payment act of the seven bodies recorded so far (38,765 versions, 6.7 MB, nothing personal).
   `.github/workflows/drift.yml` re-fetches them every Monday and fails, emailing the repo owner, if any recorded
   act changed, lost a version or disappeared. First live check: Amorgos unchanged since 2026-10-12.
+  First run on GitHub's runners (2026-11-04, run 41840071034, workflow_dispatch): Diavgeia reachable from them;
+  all seven manifests unchanged. Larissa has published 6 new acts and Piraeus 2 with a 2025 issue date since the
+  mid-October recording: acts reach the portal a year or more after their issue date, so a year's manifest is
+  never final. Growth is not an alarm; re-snapshot a year once its late publications settle.
 
 - 23 Foundry tests, 127 vitest tests, all green.
 - `deploy / anchor / verify / pay / award / link` against Anvil with fixtures: five real versions across four
