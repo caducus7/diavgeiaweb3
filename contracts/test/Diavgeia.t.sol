@@ -201,6 +201,17 @@ contract DiavgeiaTest is Test {
         assertEq(rail.count(), 0);
     }
 
+    function test_release_refuses_no_payee() public {
+        // Payroll and withholding remittances name no payee on any line: anchored with payeeVat 0
+        vm.prank(signerAthens);
+        reg.anchor(adaPaints, _paymentAnchor(hashPaintsV1, 0, 2546216, 0, 0, false));
+        vm.prank(treasury);
+        vm.expectRevert(PaymentGate.NoPayee.selector);
+        gate.release(adaPaints, 0, 2546216);
+        assertEq(rail.count(), 0);
+        assertFalse(gate.released(adaPaints));
+    }
+
     function test_release_refuses_double_pay() public {
         vm.prank(signerAthens);
         reg.anchor(adaPaints, _paymentAnchor(hashPaintsV1, PAINTS_PAYEE, 2546216, 0, contractPaints, false));

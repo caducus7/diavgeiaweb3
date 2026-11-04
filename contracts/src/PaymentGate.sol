@@ -12,7 +12,7 @@ interface IEuroRail {
 /// @title PaymentGate
 /// @notice "Publish before pay" as code: a disbursement executes only if the
 ///         ADA is anchored by the publishing organisation (the payer, SPEC §4),
-///         is a B.2.2 act, names a payee other than that organisation, matches
+///         is a B.2.2 act, names a payee, and one other than that organisation, matches
 ///         payee and amount, has not been voided, and has not already been paid.
 contract PaymentGate {
     ActRegistry public immutable registry;
@@ -31,6 +31,7 @@ contract PaymentGate {
     error AmountMismatch();
     error ActVoided();
     error SelfPayment();
+    error NoPayee();
     error AlreadyReleased();
 
     constructor(ActRegistry _registry, IEuroRail _rail, address _treasury) {
@@ -50,6 +51,9 @@ contract PaymentGate {
         // An act whose payee is its own publisher is money coming in (Athens 2025: a payment typed with payer
         // and payee swapped). The anchor's payer is the publisher, not the typed payer, so refuse it here.
         if (a.payeeVat == a.payerVat) revert SelfPayment();
+        // An act that names no payee (payroll, withholding remittances: anchored with payeeVat 0) has no
+        // recipient to settle to; such disbursements stay off this gate.
+        if (a.payeeVat == 0) revert NoPayee();
         if (a.payeeVat != payeeVat) revert PayeeMismatch();
         if (a.amountCents != amountCents) revert AmountMismatch();
         if (released[ada]) revert AlreadyReleased();

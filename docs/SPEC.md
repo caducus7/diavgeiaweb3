@@ -111,7 +111,8 @@ anchors from that rule exist outside throwaway Anvil chains.
 ### PaymentGate
 - `release(bytes32 ada, uint64 payeeVat, uint128 amountCents)`: treasury only. Reverts `NotAnchored`,
   `NotPaymentAct`, `ActVoided`, `SelfPayment` (the anchor's payee is its payer, i.e. the publishing
-  organisation: money coming in, such as an act typed with payer and payee swapped), `PayeeMismatch`,
+  organisation: money coming in, such as an act typed with payer and payee swapped), `NoPayee` (`payeeVat`
+  is 0: the act names no payee, as payroll and withholding remittances do), `PayeeMismatch`,
   `AmountMismatch`, `AlreadyReleased`. On success marks
   released and calls `IEuroRail.settle(payerVat, payeeVat, amountCents, ada)`.
 - `IEuroRail` is the bank-side adapter boundary. `MockRail` records calls and does nothing else.

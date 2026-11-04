@@ -104,7 +104,7 @@ Thessaloniki 6114, Piraeus 6243, Patras 6241, Heraklion (Crete) 6325 and Larissa
 
 ## What runs today
 
-- 22 Foundry tests, 122 vitest tests, all green.
+- 23 Foundry tests, 122 vitest tests, all green.
 - `deploy / anchor / verify / pay / award / link` against Anvil with fixtures: five real versions across four
   ADAs anchor; verify shows portal = chain = 624,252.09 EUR; tampering one amount by 36 cents is caught with
   exit 2; paying the voided act is refused with `ActVoided()`; linking the paints act against a 20,000 EUR
@@ -129,7 +129,8 @@ Thessaloniki 6114, Piraeus 6243, Patras 6241, Heraklion (Crete) 6325 and Larissa
       multi-line acts repeat one payee". **Corrected 2026-10-15 (an error in the analysis, caught in review):**
       942 repeat one real payee VAT; 994 name no payee on any line (payroll, overtime, withholding remittances:
       28.6M of the 31.8M EUR added in Thessaloniki, 14.5M of 20.5M in Larissa) and are summed under payeeVat 0.
-      Whether that stands is back with the owner (below). Still open: the 5 acts that split a payment between payees (Larissa) expose
+      **Decided 2026-11-04 by the project owner:** keep summing them (the money did go out), and PaymentGate
+      refuses an act with no payee (`NoPayee`): there is no recipient to settle to. Still open: the 5 acts that split a payment between payees (Larissa) expose
       only their first line; a Merkle root of payees or one anchor per payee would cover them.
 - [x] Unsupported amounts (13 acts in 2025: negative credit lines, float residues where 0.00 was meant).
       **Decided 2026-10-14 by the project owner:** keep rejecting them, scoped to their act (`unsupported`,
