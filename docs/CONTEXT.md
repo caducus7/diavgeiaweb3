@@ -104,7 +104,12 @@ Thessaloniki 6114, Piraeus 6243, Patras 6241, Heraklion (Crete) 6325 and Larissa
 
 ## What runs today
 
-- 23 Foundry tests, 122 vitest tests, all green.
+- **Weekly drift check without a chain** (2026-11-04): `manifests/` holds the canonical hash of every version of
+  every 2025 payment act of the seven bodies recorded so far (38,765 versions, 6.7 MB, nothing personal).
+  `.github/workflows/drift.yml` re-fetches them every Monday and fails, emailing the repo owner, if any recorded
+  act changed, lost a version or disappeared. First live check: Amorgos unchanged since 2026-10-12.
+
+- 23 Foundry tests, 127 vitest tests, all green.
 - `deploy / anchor / verify / pay / award / link` against Anvil with fixtures: five real versions across four
   ADAs anchor; verify shows portal = chain = 624,252.09 EUR; tampering one amount by 36 cents is caught with
   exit 2; paying the voided act is refused with `ActVoided()`; linking the paints act against a 20,000 EUR

@@ -19,6 +19,7 @@ import { parseArgs } from "node:util";
 import { makeClient, BASE } from "./diavgeia.js";
 import { RecordingClient, prefetch } from "./record.js";
 import { liveCheck, type FixtureFile } from "./livecheck.js";
+import { snapshot, drift, DRIFT_ALARM, type Manifest } from "./drift.js";
 import { parseDecision } from "./validate.js";
 import { actHash, adaKey, anchorPayment, toCents, isVoid, vatToUint, unsupportedAmount } from "./canonical.js";
 import { isPerActError } from "./validate.js";
@@ -49,6 +50,7 @@ const { positionals, values: a } = parseArgs({
     json: { type: "boolean", default: false },
     out: { type: "string" },
     fixture: { type: "string", default: "fixtures/athens-2025-11.json" },
+    manifest: { type: "string" },
     concurrency: { type: "string", default: "4" },
   },
 });
@@ -213,6 +215,36 @@ async function cmdRecord() {
   if (r.perActErrors.length || r.missingVersions.length || r.signerErrors.length) process.exitCode = 2;
 }
 
+/** Write a manifest (ADA, versionId, hash per version; nothing personal) for the window: `drift` checks against it. */
+async function cmdSnapshot() {
+  if (!a.out) throw new Error("--out manifests/<org>-<from>-<to>.json required");
+  // Built from a recording, the manifest dates from when the recording was fetched, not from today.
+  const fixture = process.env.DIAVGEIA_FIXTURE;
+  const created = (fixture && JSON.parse(readFileSync(fixture, "utf8"))._fetched) || new Date().toISOString().slice(0, 10);
+  const m = await snapshot(client, { org: a.org!, type: a.type!, from: a.from!, to: a.to! }, created);
+  mkdirSync(dirname(a.out), { recursive: true });
+  writeFileSync(a.out, JSON.stringify(m, null, 1) + "\n");
+  const versions = Object.values(m.acts).reduce((n, vs) => n + vs.length, 0);
+  console.log(`snapshot ${a.out}: ${Object.keys(m.acts).length} acts, ${versions} versions, ${Object.keys(m.historyErrors).length} history error(s)`);
+}
+
+/** Compare the portal with one or more manifests. Exit 2 if any published content changed or disappeared. */
+async function cmdDrift() {
+  const paths = (a.manifest ?? "").split(",").filter(Boolean);
+  if (!paths.length) throw new Error("--manifest path[,path...] required");
+  let alarms = 0;
+  for (const path of paths) {
+    const m = JSON.parse(readFileSync(path, "utf8")) as Manifest;
+    const out = await drift(client, m);
+    const bad = out.filter((f) => DRIFT_ALARM.has(f.kind));
+    alarms += bad.length;
+    const count = (k: string) => out.filter((f) => f.kind === k).length;
+    console.log(`drift ${path} (org ${m.query.org}, ${m.query.from}..${m.query.to}, snapshot ${m.created}): ${bad.length ? `${bad.length} ALARM(S)` : "no change to recorded acts"}; ${count("new-act")} new act(s), ${count("new-version")} act(s) with new versions`);
+    for (const f of bad) console.log(`  ${f.kind.padEnd(14)} ${f.ada}  ${f.detail}`);
+  }
+  if (alarms) process.exitCode = 2;
+}
+
 async function cmdLiveCheck() {
   if (process.env.DIAVGEIA_FIXTURE) throw new Error("live-check compares a fixture with the live API; unset DIAVGEIA_FIXTURE and pass --fixture");
   const fx = JSON.parse(readFileSync(a.fixture!, "utf8")) as FixtureFile;
@@ -278,7 +310,7 @@ function revertName(e: unknown): string {
   return (e as Error).message.split("\n")[0];
 }
 
-const cmds: Record<string, () => Promise<void>> = { deploy: cmdDeploy, anchor: cmdAnchor, verify: cmdVerify, page: cmdPage, "live-check": cmdLiveCheck, record: cmdRecord, pay: cmdPay, award: cmdAward, link: cmdLink };
+const cmds: Record<string, () => Promise<void>> = { deploy: cmdDeploy, anchor: cmdAnchor, verify: cmdVerify, page: cmdPage, "live-check": cmdLiveCheck, record: cmdRecord, snapshot: cmdSnapshot, drift: cmdDrift, pay: cmdPay, award: cmdAward, link: cmdLink };
 if (!cmd || !cmds[cmd]) { console.error(`usage: cli <${Object.keys(cmds).join("|")}> [options]`); process.exit(1); }
 /** Save what a live run fetched. Never writes an empty file (deploy, pay, ... fetch nothing), and keeps a
  *  partial recording of a failed run, marked as such, so the failure can be replayed offline. */

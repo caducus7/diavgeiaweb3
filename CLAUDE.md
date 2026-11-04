@@ -28,12 +28,16 @@ DIAVGEIA_FIXTURE=fixtures/athens-2025-11.json npx tsx src/cli.ts page     # writ
 NODE_USE_ENV_PROXY=1 npx tsx src/cli.ts live-check   # with network: fixture vs live API. Run first in any session that can reach it
 NODE_USE_ENV_PROXY=1 npx tsx src/cli.ts record --from 2025-01-01 --to 2025-12-31 --out out/athens-2025.json  # ~4 min
 DIAVGEIA_FIXTURE=out/athens-2025.json npx tsx src/cli.ts anchor --from 2025-01-01 --to 2025-12-31   # ~7 min on Anvil
+DIAVGEIA_FIXTURE=out/athens-2025.json npx tsx src/cli.ts snapshot --org 6013 --from 2025-01-01 --to 2025-12-31 --out ../manifests/6013-2025.json
+NODE_USE_ENV_PROXY=1 npx tsx src/cli.ts drift --manifest ../manifests/6027-2025.json   # live; exit 2 if recorded acts changed
 ```
 
 Unset `DIAVGEIA_FIXTURE` to use the live API at https://diavgeia.gov.gr/opendata.
 
 CI (`.github/workflows/ci.yml`) runs `forge test`, `npm test` and `npm run typecheck` on every push and pull
-request. It is offline only: no Anvil runs and no live API.
+request. It is offline only: no Anvil runs and no live API. `.github/workflows/drift.yml` runs `drift` on every
+manifest in `manifests/` against the live API, weekly and on demand. A new body or year: record it, `snapshot` it
+into `manifests/`, commit; the next weekly run covers it.
 
 ## Environment notes (cloud sandboxes)
 

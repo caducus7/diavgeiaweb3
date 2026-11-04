@@ -213,6 +213,15 @@ compares canonical hashes per versionId (for a record with an unhashable amount,
 hash of the record with amounts removed). Reports acts missing on either side, live versions newer than the
 fixture, and per-act errors as `DIFF` lines. Exit 2 on any difference.
 
+`snapshot --out manifests/<org>-<year>.json`: a manifest of the window, per act the versionId and canonical
+hash of every version, oldest first (`null` for a version whose amount the canonical form cannot hold), plus
+ADAs whose history contradicted itself. ADAs, versionIds and hashes only: no VAT numbers, names or amounts.
+Dated by the recording it was built from. `drift --manifest a.json[,b.json]`: re-fetches each manifest's window
+and reports `changed` (a recorded version's hash differs, or its position moved), `version-lost`, `gone` (the
+act is no longer returned for the window) and `history-error` as alarms (exit 2), and `new-act` /
+`new-version` as growth. It refuses a manifest from another canonical version. This is Phase 1's guarantee
+without a chain; `.github/workflows/drift.yml` runs it weekly on `manifests/`.
+
 `DIAVGEIA_RECORD=f.json` on a live run saves every record and version log fetched, in the fixture format.
 
 Heuristics, flagged as such in code:

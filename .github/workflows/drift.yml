@@ -1,0 +1,46 @@
+# Weekly tamper check: every act and version in manifests/ re-fetched from the live Diavgeia API and compared by
+# canonical hash. Fails (and GitHub emails the repo owner) if published content changed or disappeared.
+name: drift
+
+on:
+  schedule:
+    - cron: "17 5 * * 1" # Mondays 05:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: drift
+  cancel-in-progress: false
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    defaults:
+      run:
+        working-directory: verifier
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: verifier/package-lock.json
+      - run: npm ci
+      - name: Diavgeia reachable
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 60 https://diavgeia.gov.gr/opendata/organizations/6013.json || true)
+          echo "HTTP $code"
+          [ "$code" = "200" ] || { echo "::error::diavgeia.gov.gr not reachable from this runner (HTTP $code); no check was made"; exit 1; }
+      - name: Compare the portal with every manifest
+        run: |
+          set -o pipefail
+          npx tsx src/cli.ts drift --manifest "$(ls ../manifests/*.json | paste -sd, -)" 2>&1 | tee drift.txt
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: drift-report
+          path: verifier/drift.txt
+          if-no-files-found: ignore
